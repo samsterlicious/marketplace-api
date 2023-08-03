@@ -9,6 +9,7 @@ import { Construct } from 'constructs'
 import { Config } from '../../backend-stack'
 import { Lambdas } from '../lambdas'
 import { createBetResource } from './routes/bet'
+import { createMarketplaceResource } from './routes/marketplace'
 
 export function createApi(
   scope: Construct,
@@ -45,6 +46,7 @@ export function createApi(
   })
 
   createBetResource(api, lambdas.bet)
+  createMarketplaceResource(api, lambdas.marketplace)
 
   return api
 }

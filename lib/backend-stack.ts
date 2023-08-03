@@ -3,6 +3,7 @@ import { Construct } from 'constructs'
 import { createApi } from './api/gateway'
 import { createLambdas } from './api/lambdas'
 import { createDynamoDatabase } from './database'
+import { createEventBridge } from './eventBridge'
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class BackendStack extends cdk.Stack {
@@ -17,6 +18,8 @@ export class BackendStack extends cdk.Stack {
     const config = this.node.getContext(environment)
     const table = createDynamoDatabase(this)
     const lambdas = createLambdas(this, table)
+
+    createEventBridge(this, lambdas.marketplace.create)
     createApi(this, lambdas, config)
   }
 }

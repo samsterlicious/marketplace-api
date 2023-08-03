@@ -8,6 +8,7 @@ export function createDynamoDatabase(scope: Construct): Table {
     billingMode: BillingMode.PROVISIONED,
     readCapacity: 1,
     writeCapacity: 1,
+    timeToLiveAttribute: 'ttl',
   })
 
   table.addGlobalSecondaryIndex({
