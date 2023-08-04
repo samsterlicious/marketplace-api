@@ -13,3 +13,4 @@ require (
 )
 
 replace sammy.link/marketplace => ../marketplace
+replace sammy.link/util => ../util

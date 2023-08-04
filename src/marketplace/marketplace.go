@@ -2,7 +2,6 @@ package marketplace
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sync"
 	"time"
@@ -89,9 +88,8 @@ func BuildMarketplaceDynamoId(sport string, league string, date time.Time, awayT
 	return fmt.Sprintf("%s|%s|%s|%s|%s", sport, league, date.Format(time.RFC3339), awayTeam, homeTeam)
 }
 
-func GetMarketplaceItems() []*MarketplaceDynamoDbItem {
+func GetMarketplaceItems(tableName string) []*MarketplaceDynamoDbItem {
 	svc := getDynamoClient()
-	tableName := os.Getenv("TABLE_NAME")
 	resp, err := svc.Query(&dynamodb.QueryInput{
 		TableName:              &tableName,
 		KeyConditionExpression: aws.String("id = :id"),
@@ -117,7 +115,7 @@ func GetMarketplaceItems() []*MarketplaceDynamoDbItem {
 	return marketplaceItems
 }
 
-func WriteMarketplaceItems(items []MarketplaceItem, waitGroup *sync.WaitGroup) {
+func WriteMarketplaceItems(items []MarketplaceItem, tableName string, waitGroup *sync.WaitGroup) {
 
 	svc := getDynamoClient()
 
@@ -143,7 +141,7 @@ func WriteMarketplaceItems(items []MarketplaceItem, waitGroup *sync.WaitGroup) {
 		}}
 	}
 
-	requestItems[os.Getenv("TABLE_NAME")] = putItems
+	requestItems[tableName] = putItems
 
 	_, err := svc.BatchWriteItem(&dynamodb.BatchWriteItemInput{
 		RequestItems: requestItems,

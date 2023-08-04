@@ -1,4 +1,8 @@
 go 1.20
 
 use ./src/marketplace
-use ./src/main
+
+use (
+	./src/main
+	./src/util
+)

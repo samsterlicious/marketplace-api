@@ -90,9 +90,9 @@ func main() {
 }
 
 func handler(ctx context.Context) {
-	os.Setenv("TABLE_NAME", "BackendStack-table8235A42E-1GC3LE21GNUV8")
+	tableName := os.Getenv("TABLE_NAME")
 
-	marketplaceDbItems := marketplace.GetMarketplaceItems()
+	marketplaceDbItems := marketplace.GetMarketplaceItems(tableName)
 
 	fmt.Printf("%d is len", len(marketplaceDbItems))
 
@@ -136,7 +136,7 @@ func handler(ctx context.Context) {
 
 	for i := 0; i < len(events); i += 25 {
 		waitGroup.Add(1)
-		marketplace.WriteMarketplaceItems(events[i:min(i+25, len(events))], &waitGroup)
+		marketplace.WriteMarketplaceItems(events[i:min(i+25, len(events))], tableName, &waitGroup)
 	}
 
 	waitGroup.Wait()
