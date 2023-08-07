@@ -47,7 +47,7 @@ type espnCompetitor struct {
 	Name     string `json:"name"`
 	HomeAway string `json:"homeAway"`
 	Winner   bool   `json:"winner"`
-	LogoDark string `json:"logoDark"`
+	Logo     string `json:"logo"`
 }
 
 type espnOdds struct {
@@ -124,7 +124,7 @@ func handler(ctx context.Context) {
 
 						events = append(events, marketplace.MarketplaceItem{Name: event.Name, AwayCompetitor: awayCompetitor.Name,
 							HomeCompetitor: homeCompetitor.Name, Date: event.Date, Sport: sport.Name, League: league.Name,
-							AwayLogo: awayCompetitor.LogoDark, HomeLogo: homeCompetitor.LogoDark, Spread: event.Odds.Details})
+							AwayLogo: awayCompetitor.Logo, HomeLogo: homeCompetitor.Logo, Spread: event.Odds.Details})
 					}
 				}
 			}

@@ -12,3 +12,13 @@ func ApigatewayResponse(body string) (events.APIGatewayProxyResponse, error) {
 	},
 		StatusCode: 200}, nil
 }
+
+func Filter[T any](slice []T, test func(T) bool) []T {
+	ret := make([]T, 0, len(slice))
+	for _, element := range slice {
+		if test(element) {
+			ret = append(ret, element)
+		}
+	}
+	return ret
+}

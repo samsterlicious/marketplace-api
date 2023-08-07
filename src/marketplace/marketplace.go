@@ -48,8 +48,8 @@ func getDynamoClient() *dynamodb.DynamoDB {
 	return svc
 }
 
-func ConvertMarketplaceItems(items []*MarketplaceDynamoDbItem) []*MarketplaceItem {
-	response := make([]*MarketplaceItem, 0, len(items))
+func ConvertMarketplaceItems(items []MarketplaceDynamoDbItem) []MarketplaceItem {
+	response := make([]MarketplaceItem, 0, len(items))
 
 	for _, item := range items {
 		response = append(response, item.GetMarketplaceItem())
@@ -57,7 +57,7 @@ func ConvertMarketplaceItems(items []*MarketplaceDynamoDbItem) []*MarketplaceIte
 	return response
 }
 
-func (item MarketplaceDynamoDbItem) GetMarketplaceItem() *MarketplaceItem {
+func (item MarketplaceDynamoDbItem) GetMarketplaceItem() MarketplaceItem {
 	expression := regexp.MustCompile(`(?P<Sport>[^|]+)\|(?P<League>[^|]+)\|(?P<Date>[^|]+)\|(?P<AwayCompetitor>[^|]+)\|(?P<HomeCompetitor>[^|]+)`)
 
 	match := expression.FindStringSubmatch(item.SortKey)
@@ -71,7 +71,7 @@ func (item MarketplaceDynamoDbItem) GetMarketplaceItem() *MarketplaceItem {
 
 	date, _ := time.Parse(time.RFC3339, paramsMap["Date"])
 
-	return &MarketplaceItem{
+	return MarketplaceItem{
 		Name:           item.Name,
 		AwayCompetitor: paramsMap["AwayCompetitor"],
 		HomeCompetitor: paramsMap["HomeCompetitor"],
@@ -88,7 +88,7 @@ func BuildMarketplaceDynamoId(sport string, league string, date time.Time, awayT
 	return fmt.Sprintf("%s|%s|%s|%s|%s", sport, league, date.Format(time.RFC3339), awayTeam, homeTeam)
 }
 
-func GetMarketplaceItems(tableName string) []*MarketplaceDynamoDbItem {
+func GetMarketplaceItems(tableName string) []MarketplaceDynamoDbItem {
 	svc := getDynamoClient()
 	resp, err := svc.Query(&dynamodb.QueryInput{
 		TableName:              &tableName,
@@ -104,7 +104,7 @@ func GetMarketplaceItems(tableName string) []*MarketplaceDynamoDbItem {
 		fmt.Println(err.Error())
 	}
 
-	var marketplaceItems []*MarketplaceDynamoDbItem
+	var marketplaceItems []MarketplaceDynamoDbItem
 
 	err = dynamodbattribute.UnmarshalListOfMaps(resp.Items, &marketplaceItems)
 
