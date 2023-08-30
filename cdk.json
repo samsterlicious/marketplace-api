@@ -49,8 +49,15 @@
     "@aws-cdk/core:includePrefixInUniqueNameGeneration": true,
     "@aws-cdk/aws-opensearchservice:enableOpensearchMultiAzWithStandby": true,
     "prod": {
+      "auth0": {
+        "audience": [
+          "https://dev-33fncjbn.us.auth0.com/api/v2/",
+          "https://dev-33fncjbn.us.auth0.com/userinfo"
+        ],
+        "issuer": "https://dev-33fncjbn.us.auth0.com/"
+      },
       "domain": {
-        "prefix": "marketplace-api",
+        "prefix": "market-api",
         "root": "sammy.link"
       }
     }

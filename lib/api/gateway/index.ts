@@ -1,21 +1,29 @@
-import { Cors, RestApi } from 'aws-cdk-lib/aws-apigateway'
+import {
+  CorsHttpMethod,
+  DomainName,
+  HttpApi,
+} from '@aws-cdk/aws-apigatewayv2-alpha'
+import { HttpJwtAuthorizer } from '@aws-cdk/aws-apigatewayv2-authorizers-alpha'
+import { Duration } from 'aws-cdk-lib'
+import { Cors } from 'aws-cdk-lib/aws-apigateway'
 import {
   Certificate,
   CertificateValidation,
 } from 'aws-cdk-lib/aws-certificatemanager'
 import { ARecord, HostedZone, RecordTarget } from 'aws-cdk-lib/aws-route53'
-import { ApiGateway } from 'aws-cdk-lib/aws-route53-targets'
+import { ApiGatewayv2DomainProperties } from 'aws-cdk-lib/aws-route53-targets'
 import { Construct } from 'constructs'
 import { Config } from '../../backend-stack'
 import { Lambdas } from '../lambdas'
 import { createBetResource } from './routes/bet'
+import { createBidResource } from './routes/bid'
 import { createMarketplaceResource } from './routes/marketplace'
 
 export function createApi(
   scope: Construct,
   lambdas: Lambdas,
   context: Config,
-): RestApi {
+): HttpApi {
   const domainName = `${context.domain.prefix}.${context.domain.root}`
 
   const zone = HostedZone.fromLookup(scope, 'hostedZone', {
@@ -27,26 +35,46 @@ export function createApi(
     validation: CertificateValidation.fromDns(zone),
   })
 
-  const api = new RestApi(scope, 'api', {
-    defaultCorsPreflightOptions: {
+  const domain = new DomainName(scope, 'domainName', {
+    domainName,
+    certificate,
+  })
+
+  const api = new HttpApi(scope, 'Api', {
+    corsPreflight: {
       allowOrigins: Cors.ALL_ORIGINS,
-      allowMethods: Cors.ALL_METHODS,
+      allowMethods: [
+        CorsHttpMethod.GET,
+        CorsHttpMethod.HEAD,
+        CorsHttpMethod.OPTIONS,
+        CorsHttpMethod.POST,
+      ],
       allowHeaders: Cors.DEFAULT_HEADERS,
+      maxAge: Duration.days(10),
     },
-    domainName: {
-      domainName,
-      certificate,
+    defaultDomainMapping: {
+      domainName: domain,
     },
   })
 
   new ARecord(scope, 'alias', {
     zone,
     recordName: context.domain.prefix,
-    target: RecordTarget.fromAlias(new ApiGateway(api)),
+    target: RecordTarget.fromAlias(
+      new ApiGatewayv2DomainProperties(
+        domain.regionalDomainName,
+        domain.regionalHostedZoneId,
+      ),
+    ),
   })
 
-  createBetResource(api, lambdas.bet)
-  createMarketplaceResource(api, lambdas.marketplace)
+  const authorizer = new HttpJwtAuthorizer('authorizer', context.auth0.issuer, {
+    jwtAudience: context.auth0.audience,
+  })
+
+  createBetResource(api, lambdas.bet, authorizer)
+  createBidResource(api, lambdas.bid, authorizer)
+  createMarketplaceResource(api, lambdas.marketplace, authorizer)
 
   return api
 }

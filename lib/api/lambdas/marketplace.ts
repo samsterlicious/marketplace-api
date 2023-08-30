@@ -1,29 +1,49 @@
 import { GoFunction } from '@aws-cdk/aws-lambda-go-alpha'
-import { Table } from 'aws-cdk-lib/aws-dynamodb'
+import { Rule, Schedule } from 'aws-cdk-lib/aws-events'
+import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets'
+import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam'
 import { Construct } from 'constructs'
-import { LambdaConfig } from '.'
+import { CreateLambdaParams, LambdaConfig } from '.'
 
 export function createMarketplaceLambdas(
   scope: Construct,
-  table: Table,
   config: LambdaConfig,
+  params: CreateMarketplaceParams,
 ): MarketplaceLambdas {
-  const getAvailableEvents = new GoFunction(
-    scope,
-    'getAvailableEventsFunction',
-    {
-      entry: 'src/main/marketplace/get',
-      ...config,
-    },
-  )
-
-  const createEvents = new GoFunction(scope, 'createEventsFunction', {
-    entry: 'src/main/marketplace/create',
+  const getAvailableEvents = new GoFunction(scope, 'getAvailableEventsLambda', {
+    entry: 'src/main/marketplace/get',
     ...config,
   })
 
-  table.grantReadWriteData(createEvents)
-  table.grantReadData(getAvailableEvents)
+  const createEvents = new GoFunction(scope, 'createEventsLambda', {
+    entry: 'src/main/marketplace/create',
+    ...config,
+    environment: {
+      ...config.environment,
+      CREATE_LAMBDA_ARN: params.createBetLambdaArn,
+    },
+  })
+
+  params.table.grantReadWriteData(createEvents)
+  params.table.grantReadData(getAvailableEvents)
+
+  createEvents.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['events:PutRule', 'events:PutTargets'],
+      resources: [
+        `arn:aws:events:${process.env.CDK_DEFAULT_REGION}:${process.env.CDK_DEFAULT_ACCOUNT}:rule/*`,
+        `arn:aws:events:${process.env.CDK_DEFAULT_REGION}:${process.env.CDK_DEFAULT_ACCOUNT}:event-bus/default`,
+      ],
+      effect: Effect.ALLOW,
+    }),
+  )
+
+  // const eventBus = EventBus.fromEventBusName(scope, 'DefaultBus', 'default')
+
+  new Rule(scope, 'MarketplacePopulatorRule', {
+    schedule: Schedule.cron({ minute: '0', hour: '4' }),
+    targets: [new LambdaFunction(createEvents)],
+  })
 
   return {
     create: createEvents,
@@ -34,4 +54,8 @@ export function createMarketplaceLambdas(
 export type MarketplaceLambdas = {
   create: GoFunction
   get: GoFunction
+}
+
+export type CreateMarketplaceParams = CreateLambdaParams & {
+  createBetLambdaArn: string
 }

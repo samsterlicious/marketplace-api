@@ -9,9 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"samster.link/marketplace"
-
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
+	"sammy.link/marketplace"
+	"sammy.link/util"
 )
 
 type espnResponse struct {
@@ -20,12 +23,7 @@ type espnResponse struct {
 
 type espnSport struct {
 	Name    string       `json:"name"`
-	Logos   []espnLogo   `json:"logos"`
 	Leagues []espnLeague `json:"leagues"`
-}
-
-type espnLogo struct {
-	Href string `json:"href"`
 }
 
 type espnLeague struct {
@@ -47,7 +45,6 @@ type espnCompetitor struct {
 	Name     string `json:"name"`
 	HomeAway string `json:"homeAway"`
 	Winner   bool   `json:"winner"`
-	Logo     string `json:"logo"`
 }
 
 type espnOdds struct {
@@ -61,11 +58,11 @@ func min(a, b int) int {
 	return b
 }
 
-func getEspnData(sport string, channel chan espnResponse) {
-	format := "20060102"
+func getEspnData(sport string, league string, channel chan espnResponse) {
+	const format = "20060102"
 
-	resp, err := http.Get(fmt.Sprintf("https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=%s&dates=%s-%s",
-		sport, time.Now().Format(format), time.Now().AddDate(0, 0, 7).Format(format)))
+	resp, err := http.Get(fmt.Sprintf("https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=%s&league=%s&dates=%s-%s",
+		sport, league, time.Now().Format(format), time.Now().AddDate(0, 0, 7).Format(format)))
 
 	if err != nil {
 		panic(err)
@@ -83,16 +80,15 @@ func getEspnData(sport string, channel chan espnResponse) {
 	channel <- response
 }
 
-var SPORTS = [...]string{"soccer", "basketball", "football", "baseball"}
-
 func main() {
 	lambda.Start(handler)
 }
 
 func handler(ctx context.Context) {
-	tableName := os.Getenv("TABLE_NAME")
 
-	marketplaceDbItems := marketplace.GetMarketplaceItems(tableName)
+	config := util.GetAwsConfig(ctx)
+	client := util.GetDynamoClient(config)
+	marketplaceDbItems := marketplace.GetMarketplaceItems(ctx, client)
 
 	fmt.Printf("%d is len", len(marketplaceDbItems))
 
@@ -104,27 +100,48 @@ func handler(ctx context.Context) {
 
 	espnResponseChannel := make(chan espnResponse, 4)
 
-	for _, sport := range SPORTS {
-		go getEspnData(sport, espnResponseChannel)
+	sportMap := map[string][]string{
+		"football": {"nfl", "college-football"},
+	}
+
+	for sport, leagues := range sportMap {
+		for _, league := range leagues {
+			go getEspnData(sport, league, espnResponseChannel)
+		}
+
 	}
 
 	events := make([]marketplace.MarketplaceItem, 0, 25)
 
-	for range SPORTS {
-		response := <-espnResponseChannel
+	eventBridgeMap := make(map[int64][]marketplace.MarketplaceItem)
 
-		for _, sport := range response.Sports {
-			for _, league := range sport.Leagues {
-				for _, event := range league.Events {
+	for _, leagues := range sportMap {
+		for range leagues {
+			response := <-espnResponseChannel
 
-					awayCompetitor := event.Competitors[0]
-					homeCompetitor := event.Competitors[1]
+			for _, sport := range response.Sports {
+				for _, league := range sport.Leagues {
+					for _, event := range league.Events {
 
-					if !marketplaceCache[marketplace.BuildMarketplaceDynamoId(sport.Name, league.Name, event.Date, awayCompetitor.Name, homeCompetitor.Name)] && event.Date.After(time.Now()) && event.Odds.Details != "" {
+						awayTeam := event.Competitors[0]
+						homeTeam := event.Competitors[1]
 
-						events = append(events, marketplace.MarketplaceItem{Name: event.Name, AwayCompetitor: awayCompetitor.Name,
-							HomeCompetitor: homeCompetitor.Name, Date: event.Date, Sport: sport.Name, League: league.Name,
-							AwayLogo: awayCompetitor.Logo, HomeLogo: homeCompetitor.Logo, Spread: event.Odds.Details})
+						kind := getKind(league.Name)
+
+						if !marketplaceCache[marketplace.BuildMarketplaceDynamoId(kind, event.Date, awayTeam.Name, homeTeam.Name)] && event.Date.After(time.Now()) && event.Odds.Details != "" && event.Odds.Details != "OFF" {
+							item := marketplace.MarketplaceItem{AwayTeam: awayTeam.Name,
+								HomeTeam: homeTeam.Name, Date: event.Date, Kind: kind,
+								Spread: event.Odds.Details}
+
+							formattedDate := event.Date.Unix()
+							if val, ok := eventBridgeMap[formattedDate]; ok {
+								eventBridgeMap[formattedDate] = append(val, item)
+							} else {
+								eventBridgeMap[formattedDate] = []marketplace.MarketplaceItem{item}
+							}
+
+							events = append(events, item)
+						}
 					}
 				}
 			}
@@ -136,8 +153,75 @@ func handler(ctx context.Context) {
 
 	for i := 0; i < len(events); i += 25 {
 		waitGroup.Add(1)
-		marketplace.WriteMarketplaceItems(events[i:min(i+25, len(events))], tableName, &waitGroup)
+		go func(myEvents []marketplace.MarketplaceItem) {
+			marketplace.WriteMarketplaceItems(ctx, myEvents, &waitGroup, client)
+		}(events[i:min(i+25, len(events))])
+	}
+
+	bridge := eventbridge.NewFromConfig(config)
+
+	nowUnix := time.Now().Unix()
+
+	for eventDate, events := range eventBridgeMap {
+
+		waitGroup.Add(1)
+
+		go func(myEventDate int64, myEvents []marketplace.MarketplaceItem, myNowUnix int64) {
+			defer waitGroup.Done()
+			createRuleAndTarget(ctx, bridge, myEventDate, nowUnix, myEvents)
+
+		}(eventDate, events, nowUnix)
+
 	}
 
 	waitGroup.Wait()
+}
+
+func createRuleAndTarget(ctx context.Context, bridge *eventbridge.Client, myEventDate int64, myNowUnix int64, myEvents []marketplace.MarketplaceItem) {
+	ruleName := aws.String(fmt.Sprintf("%d-%d", myEventDate, myNowUnix))
+
+	firstEventDate := myEvents[0].Date
+	cronExpression := fmt.Sprintf("cron(%d %d %d %d ? %d)", firstEventDate.Minute(), firstEventDate.Hour(), firstEventDate.Day(), int(firstEventDate.Month()), firstEventDate.Year())
+
+	input := &eventbridge.PutRuleInput{
+		Name:               ruleName,
+		ScheduleExpression: aws.String(cronExpression),
+		State:              types.RuleStateEnabled,
+	}
+
+	_, err := bridge.PutRule(ctx, input)
+
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	jsonInput, _ := json.Marshal(TargetInput{
+		RuleName: *ruleName,
+		Events:   myEvents,
+	})
+
+	targetInput := &eventbridge.PutTargetsInput{
+		Rule: ruleName,
+		Targets: []types.Target{
+			{
+				Arn:   aws.String(os.Getenv("CREATE_LAMBDA_ARN")),
+				Id:    aws.String("my-target"),
+				Input: aws.String(string(jsonInput)),
+			},
+		},
+	}
+
+	bridge.PutTargets(ctx, targetInput)
+}
+
+func getKind(league string) string {
+	if league == "NCAA - Football" {
+		return "CFB"
+	}
+	return "NFL"
+}
+
+type TargetInput struct {
+	Events   []marketplace.MarketplaceItem `json:"events"`
+	RuleName string                        `json:"ruleName"`
 }
