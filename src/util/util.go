@@ -92,3 +92,10 @@ func executeQuery[T interface{}](ctx context.Context, client *dynamodb.Client, i
 
 	return items
 }
+
+func Min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

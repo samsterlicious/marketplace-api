@@ -62,6 +62,16 @@ func GetBetsByDate(ctx context.Context, date string, client *dynamodb.Client) []
 	})
 }
 
+func GetBetsByEventDate(ctx context.Context, date string, client *dynamodb.Client) []BetDynamoItem {
+	return util.Query[BetDynamoItem](ctx, client, &dynamodb.QueryInput{
+		TableName:              aws.String(os.Getenv("TABLE_NAME")),
+		KeyConditionExpression: aws.String("id = :id"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":id": &types.AttributeValueMemberS{Value: fmt.Sprintf("BET|%s", date)},
+		},
+	})
+}
+
 func GetBetsByUser(ctx context.Context, user string, client *dynamodb.Client) []BetDynamoItem {
 	betChannel := make(chan []BetDynamoItem)
 
@@ -121,6 +131,16 @@ func (bet BetDynamoItem) GetItem() Bet {
 		Amount:   bet.Amount,
 		Date:     gameDate.AddDate(0, -1, -1),
 	}
+}
+
+func ConvertDyanmoList(dynamoBids []BetDynamoItem) []Bet {
+	bets := make([]Bet, 0, len(dynamoBids))
+
+	for _, dynamoBid := range dynamoBids {
+		bets = append(bets, dynamoBid.GetItem())
+	}
+
+	return bets
 }
 
 func WriteBets(ctx context.Context, items []Bet, client *dynamodb.Client, now time.Time) {

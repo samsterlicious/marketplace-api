@@ -40,3 +40,5 @@ replace sammy.link/marketplace => ../marketplace
 replace sammy.link/util => ../util
 
 replace sammy.link/bid => ../bid
+
+replace sammy.link/espn => ../espn

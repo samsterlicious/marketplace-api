@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -13,72 +12,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
+	"sammy.link/espn"
 	"sammy.link/marketplace"
 	"sammy.link/util"
 )
-
-type espnResponse struct {
-	Sports []espnSport `json:"sports"`
-}
-
-type espnSport struct {
-	Name    string       `json:"name"`
-	Leagues []espnLeague `json:"leagues"`
-}
-
-type espnLeague struct {
-	Name         string      `json:"name"`
-	Abbreviation string      `json:"abbreviation"`
-	Events       []espnEvent `json:"events"`
-}
-
-type espnEvent struct {
-	Name        string           `json:"name"`
-	ShortName   string           `json:"shortName"`
-	Date        time.Time        `json:"date"`
-	Odds        espnOdds         `json:"odds"`
-	Status      string           `json:"status"`
-	Competitors []espnCompetitor `json:"competitors"`
-}
-
-type espnCompetitor struct {
-	Name     string `json:"name"`
-	HomeAway string `json:"homeAway"`
-	Winner   bool   `json:"winner"`
-}
-
-type espnOdds struct {
-	Details string `json:"details"`
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func getEspnData(sport string, league string, channel chan espnResponse) {
-	const format = "20060102"
-
-	resp, err := http.Get(fmt.Sprintf("https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=%s&league=%s&dates=%s-%s",
-		sport, league, time.Now().Format(format), time.Now().AddDate(0, 0, 7).Format(format)))
-
-	if err != nil {
-		panic(err)
-	}
-
-	defer resp.Body.Close()
-
-	var response espnResponse
-	err = json.NewDecoder(resp.Body).Decode(&response)
-
-	if err != nil {
-		panic(err)
-	}
-
-	channel <- response
-}
 
 func main() {
 	lambda.Start(handler)
@@ -98,17 +35,18 @@ func handler(ctx context.Context) {
 		marketplaceCache[item.SortKey] = true
 	}
 
-	espnResponseChannel := make(chan espnResponse, 4)
+	espnResponseChannel := make(chan espn.EspnResponse, 4)
 
 	sportMap := map[string][]string{
 		"football": {"nfl", "college-football"},
 	}
 
+	firstDate := time.Now()
+	secondDate := firstDate.AddDate(0, 0, 7)
 	for sport, leagues := range sportMap {
 		for _, league := range leagues {
-			go getEspnData(sport, league, espnResponseChannel)
+			go espn.GetEspnData(sport, league, espnResponseChannel, firstDate, secondDate)
 		}
-
 	}
 
 	events := make([]marketplace.MarketplaceItem, 0, 25)
@@ -155,7 +93,7 @@ func handler(ctx context.Context) {
 		waitGroup.Add(1)
 		go func(myEvents []marketplace.MarketplaceItem) {
 			marketplace.WriteMarketplaceItems(ctx, myEvents, &waitGroup, client)
-		}(events[i:min(i+25, len(events))])
+		}(events[i:util.Min(i+25, len(events))])
 	}
 
 	bridge := eventbridge.NewFromConfig(config)

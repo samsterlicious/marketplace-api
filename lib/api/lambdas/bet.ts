@@ -1,4 +1,5 @@
 import { GoFunction } from '@aws-cdk/aws-lambda-go-alpha'
+import { Rule, Schedule } from 'aws-cdk-lib/aws-events'
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets'
 import { Effect, PolicyStatement, ServicePrincipal } from 'aws-cdk-lib/aws-iam'
 import { Construct } from 'constructs'
@@ -19,8 +20,14 @@ export function createBetLambdas(
     ...config,
   })
 
+  const resolve = new GoFunction(scope, 'resolveBetsLambda', {
+    entry: 'src/main/bet/resolve',
+    ...config,
+  })
+
   params.table.grantReadWriteData(createBet)
   params.table.grantReadData(get)
+  params.table.grantReadWriteData(resolve)
 
   createBet.addToRolePolicy(
     new PolicyStatement({
@@ -39,13 +46,20 @@ export function createBetLambdas(
   })
   new LambdaFunction(createBet)
 
+  new Rule(scope, 'ResolveBetsRule', {
+    schedule: Schedule.cron({ minute: '0', hour: '4' }),
+    targets: [new LambdaFunction(resolve)],
+  })
+
   return {
     get,
     create: createBet,
+    resolve,
   }
 }
 
 export type BetLambdas = {
-  get: GoFunction
   create: GoFunction
+  get: GoFunction
+  resolve: GoFunction
 }

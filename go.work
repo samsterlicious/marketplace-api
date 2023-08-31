@@ -4,6 +4,8 @@ use ./src/marketplace
 
 use (
 	./src/bet
+	./src/espn
 	./src/main
+	./src/outcome
 	./src/util
 )
