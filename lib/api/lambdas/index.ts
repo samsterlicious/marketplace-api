@@ -4,6 +4,8 @@ import { Construct } from 'constructs'
 import { BetLambdas, createBetLambdas } from './bet'
 import { BidLambdas, createBidLambdas } from './bid'
 import { MarketplaceLambdas, createMarketplaceLambdas } from './marketplace'
+import { OutcomeLambdas, createOutcomeLambdas } from './outcome'
+import { UserLambdas, createUserLambdas } from './user.'
 
 export function createLambdas(
   scope: Construct,
@@ -22,6 +24,8 @@ export function createLambdas(
       ...params,
       createBetLambdaArn: betLambdas.create.functionArn,
     }),
+    outcome: createOutcomeLambdas(scope, lambdaConfig, params),
+    user: createUserLambdas(scope, lambdaConfig, params),
   }
 }
 
@@ -29,6 +33,8 @@ export type Lambdas = {
   bet: BetLambdas
   bid: BidLambdas
   marketplace: MarketplaceLambdas
+  outcome: OutcomeLambdas
+  user: UserLambdas
 }
 
 export type LambdaConfig = {

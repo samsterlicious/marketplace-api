@@ -7,16 +7,16 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
-	"sammy.link/bid"
 	"sammy.link/database"
+	"sammy.link/user"
 	"sammy.link/util"
 )
 
-func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest, bidService bid.Service) (events.APIGatewayV2HTTPResponse, error) {
+func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest, userService user.Service) (events.APIGatewayV2HTTPResponse, error) {
 
-	bids := bidService.GetBidsByEvent(ctx, request.PathParameters["event"])
+	users := userService.GetUsers(ctx)
 
-	jsonBids, _ := json.Marshal(bids)
+	jsonBids, _ := json.Marshal(users)
 
 	return util.ApigatewayResponse(string(jsonBids), 200)
 }
@@ -24,6 +24,6 @@ func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest, bidS
 func main() {
 	lambda.Start(
 		func(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-			return handleGet(ctx, request, bid.NewService(database.GetDatabaseService[bid.DyanmoBidItem, bid.Bid](ctx)))
+			return handleGet(ctx, request, user.NewService(database.GetDatabaseService[user.DynamoItem, user.Item](ctx)))
 		})
 }

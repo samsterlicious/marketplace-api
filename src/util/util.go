@@ -2,13 +2,10 @@ package util
 
 import (
 	"context"
-	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
 type DefaultResponse struct {
@@ -24,14 +21,9 @@ func ApigatewayResponse(body string, statusCode int) (events.APIGatewayV2HTTPRes
 		StatusCode: statusCode}, nil
 }
 
-func GetAwsConfig(ctx context.Context) aws.Config {
-	cfg, _ := config.LoadDefaultConfig(ctx)
-	return cfg
-}
-func GetDynamoClient(config aws.Config) *dynamodb.Client {
-	client := dynamodb.NewFromConfig(config)
-
-	return client
+func GetAwsConfig(ctx context.Context) (aws.Config, error) {
+	cfg, err := config.LoadDefaultConfig(ctx)
+	return cfg, err
 }
 
 func Filter[T any](slice []T, test func(T) bool) []T {
@@ -42,55 +34,6 @@ func Filter[T any](slice []T, test func(T) bool) []T {
 		}
 	}
 	return ret
-}
-
-type LockItem struct {
-	Id      string `dynamodbav:"id"`
-	SortKey string `dynamodbav:"sortKey"`
-	Ttl     int64  `dynamodbav:"ttl"`
-}
-
-func GetLock(ctx context.Context, key string, client *dynamodb.Client) error {
-	av, _ := attributevalue.MarshalMap(LockItem{
-		Id:      "LOCK",
-		SortKey: key,
-		Ttl:     time.Now().Add(time.Duration(6e+10)).Unix(),
-	})
-
-	input := &dynamodb.PutItemInput{
-		Item:                av,
-		TableName:           aws.String("BackendStack-table8235A42E-1GC3LE21GNUV8"),
-		ConditionExpression: aws.String("attribute_not_exists(sortKey)"),
-	}
-
-	_, err := client.PutItem(ctx, input)
-
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func Query[T interface{}](ctx context.Context, client *dynamodb.Client, input *dynamodb.QueryInput) []T {
-
-	dynamoItems := executeQuery[T](ctx, client, input)
-
-	return dynamoItems
-}
-
-func executeQuery[T interface{}](ctx context.Context, client *dynamodb.Client, input *dynamodb.QueryInput) []T {
-	resp, _ := client.Query(ctx, input)
-
-	var items []T
-
-	attributevalue.UnmarshalListOfMaps(resp.Items, &items)
-
-	if len(resp.LastEvaluatedKey) > 0 {
-		input.ExclusiveStartKey = resp.LastEvaluatedKey
-		return append(items, executeQuery[T](ctx, client, input)...)
-	}
-
-	return items
 }
 
 func Min(a, b int) int {

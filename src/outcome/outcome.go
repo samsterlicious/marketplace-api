@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"sammy.link/database"
 )
 
-type DynamoItem struct {
+type OutcomeDynamoItem struct {
 	Id           string `dynamodbav:"id"`
 	SortKey      string `dynamodbav:"sortKey"`
 	Gsi1_id      string `dynamodbav:"gsi1_id"`
@@ -19,56 +22,78 @@ type DynamoItem struct {
 	Gsi2_sortKey string `dynamodbav:"gsi2_sortKey"`
 }
 
-type Outcome struct {
+type OutcomeItem struct {
 	Winner  string `json:"winner"`
 	Loser   string `json:"loser"`
 	EventId string `json:"eventId"`
 	Week    string `json:"week"`
-	Amount  int64  `json:"winnerAmount"`
+	Amount  int64  `json:"amount"`
 	Id      string `json:"id"`
 }
 
-func GetDynamoId(week string) string {
-	return fmt.Sprintf("OUT|%s", week)
+type Service interface {
+	GetByUser(ctx context.Context, user string) []OutcomeItem
+	Write(ctx context.Context, outcomes []OutcomeItem)
+}
+type OutcomeService struct {
+	databaseService database.Service[OutcomeDynamoItem, OutcomeItem]
 }
 
-func GetDynamoSortKey(guid string) string {
-	return fmt.Sprintf("%s", guid)
-}
-
-func (outcome Outcome) getDynamoItem() DynamoItem {
-	return DynamoItem{
-		Id:           GetDynamoId(outcome.Week),
-		SortKey:      GetDynamoSortKey(outcome.Id),
-		Gsi1_id:      outcome.Winner,
-		Gsi1_sortKey: fmt.Sprintf("%d", outcome.Amount),
-		Gsi2_id:      outcome.Loser,
-		Gsi2_sortKey: outcome.EventId,
+func NewService(databaseService database.Service[OutcomeDynamoItem, OutcomeItem]) Service {
+	return &OutcomeService{
+		databaseService: databaseService,
 	}
 }
 
-func Write(ctx context.Context, outcomes []Outcome, client *dynamodb.Client) {
+func (item OutcomeItem) getDynamoId() string {
+	return fmt.Sprintf("OUT|%s", item.Week)
+}
 
-	requestItems := map[string][]types.WriteRequest{}
+func (dynamoItem OutcomeDynamoItem) GetItem() database.Item {
+	amount, _ := strconv.ParseInt(dynamoItem.Gsi1_sortKey, 10, 64)
+	return OutcomeItem{
+		Winner:  dynamoItem.Gsi1_id,
+		Loser:   dynamoItem.Gsi2_id,
+		EventId: dynamoItem.Gsi2_sortKey,
+		Week:    strings.Split(dynamoItem.Id, "|")[1],
+		Amount:  amount,
+	}
+}
 
-	putItems := make([]types.WriteRequest, len(outcomes))
+func (item OutcomeItem) GetDynamoItem() database.DynamoItem {
+	return OutcomeDynamoItem{
+		Id:           item.getDynamoId(),
+		SortKey:      item.Id,
+		Gsi1_id:      item.Winner,
+		Gsi1_sortKey: fmt.Sprintf("%d", item.Amount),
+		Gsi2_id:      item.Loser,
+		Gsi2_sortKey: item.EventId,
+	}
+}
 
-	for i, item := range outcomes {
-		attributeValueMap, _ := attributevalue.MarshalMap(item.getDynamoItem())
+func (s *OutcomeService) GetByUser(ctx context.Context, user string) []OutcomeItem {
+	var sliceOne, sliceTwo []OutcomeItem
+	sliceChan := make(chan []OutcomeItem, 2)
+	for i := 1; i < 3; i++ {
+		go func(sliceChan chan []OutcomeItem, num int) {
+			sliceChan <- s.databaseService.Query(ctx, &dynamodb.QueryInput{
+				TableName:              aws.String(os.Getenv("TABLE_NAME")),
+				KeyConditionExpression: aws.String(fmt.Sprintf("gsi%d_id = :id", num)),
+				IndexName:              aws.String(fmt.Sprintf("gsi%d", num)),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":id": &types.AttributeValueMemberS{Value: user},
+				},
+			})
 
-		putItems[i] = types.WriteRequest{PutRequest: &types.PutRequest{
-			Item: attributeValueMap,
-		}}
+		}(sliceChan, i)
 	}
 
-	requestItems[os.Getenv("TABLE_NAME")] = putItems
+	sliceOne = <-sliceChan
+	sliceTwo = <-sliceChan
 
-	_, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
-		RequestItems: requestItems,
-	},
-	)
+	return append(sliceOne, sliceTwo...)
+}
 
-	if err != nil {
-		fmt.Println(err.Error())
-	}
+func (s *OutcomeService) Write(ctx context.Context, outcomes []OutcomeItem) {
+	s.databaseService.Write(ctx, outcomes)
 }

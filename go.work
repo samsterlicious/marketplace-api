@@ -4,8 +4,10 @@ use ./src/marketplace
 
 use (
 	./src/bet
+	./src/database
 	./src/espn
 	./src/main
 	./src/outcome
+	./src/user
 	./src/util
 )

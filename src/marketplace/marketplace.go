@@ -6,29 +6,14 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"sammy.link/bid"
-	"sammy.link/util"
+	"sammy.link/database"
 )
-
-type MarketplaceDynamoDbItem struct {
-	Id         string `dynamodbav:"id"`
-	SortKey    string `dynamodbav:"sortKey"`
-	Spread     string `dynamodbav:"spread"`
-	Ttl        int64  `dynamodbav:"ttl"`
-	HomeAmount int64  `dynamodbav:"homeAmount"`
-	AwayAmount int64  `dynamodbav:"awayAmount"`
-}
-
-func (item MarketplaceDynamoDbItem) String() string {
-	return fmt.Sprintf("id:%s\tsortKey:%s", item.Id, item.SortKey)
-}
 
 type MarketplaceItem struct {
 	AwayTeam   string    `json:"awayTeam"`
@@ -40,16 +25,46 @@ type MarketplaceItem struct {
 	AwayAmount int64     `json:"awayAmount"`
 }
 
-func ConvertMarketplaceItems(items []MarketplaceDynamoDbItem) []MarketplaceItem {
-	response := make([]MarketplaceItem, 0, len(items))
-
-	for _, item := range items {
-		response = append(response, item.GetMarketplaceItem())
-	}
-	return response
+type MarketplaceDynamoDbItem struct {
+	Id         string `dynamodbav:"id"`
+	SortKey    string `dynamodbav:"sortKey"`
+	Spread     string `dynamodbav:"spread"`
+	Ttl        int64  `dynamodbav:"ttl"`
+	HomeAmount int64  `dynamodbav:"homeAmount"`
+	AwayAmount int64  `dynamodbav:"awayAmount"`
 }
 
-func (item MarketplaceDynamoDbItem) GetMarketplaceItem() MarketplaceItem {
+type Service interface {
+	GetItems(ctx context.Context) []MarketplaceItem
+	ModifyAmount(ctx context.Context, bid bid.Bid)
+	Write(ctx context.Context, items []MarketplaceItem)
+}
+type MarketplaceService struct {
+	databaseService database.Service[MarketplaceDynamoDbItem, MarketplaceItem]
+}
+
+func NewService(databaseService database.Service[MarketplaceDynamoDbItem, MarketplaceItem]) Service {
+	return &MarketplaceService{
+		databaseService: databaseService,
+	}
+}
+
+func (item MarketplaceDynamoDbItem) String() string {
+	return fmt.Sprintf("id:%s\tsortKey:%s", item.Id, item.SortKey)
+}
+
+func (item MarketplaceItem) GetDynamoItem() database.DynamoItem {
+	return MarketplaceDynamoDbItem{
+		Id:         "MK",
+		SortKey:    BuildMarketplaceDynamoId(item.Kind, item.Date, item.AwayTeam, item.HomeTeam),
+		Spread:     item.Spread,
+		Ttl:        item.Date.AddDate(0, 0, 1).Unix(),
+		HomeAmount: item.HomeAmount,
+		AwayAmount: item.AwayAmount,
+	}
+}
+
+func (item MarketplaceDynamoDbItem) GetItem() database.Item {
 	expression := regexp.MustCompile(`(?P<Kind>[^|]+)\|(?P<Date>[^|]+)\|(?P<AwayTeam>[^|]+)\|(?P<HomeTeam>[^|]+)`)
 
 	match := expression.FindStringSubmatch(item.SortKey)
@@ -78,8 +93,8 @@ func BuildMarketplaceDynamoId(kind string, date time.Time, awayTeam string, home
 	return fmt.Sprintf("%s|%s|%s|%s", kind, date.Format(time.RFC3339), awayTeam, homeTeam)
 }
 
-func GetMarketplaceItems(ctx context.Context, client *dynamodb.Client) []MarketplaceDynamoDbItem {
-	return util.Query[MarketplaceDynamoDbItem](ctx, client, &dynamodb.QueryInput{
+func (s *MarketplaceService) GetItems(ctx context.Context) []MarketplaceItem {
+	return s.databaseService.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(os.Getenv("TABLE_NAME")),
 		KeyConditionExpression: aws.String("id = :id"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
@@ -88,7 +103,7 @@ func GetMarketplaceItems(ctx context.Context, client *dynamodb.Client) []Marketp
 	})
 }
 
-func ModifyAmount(ctx context.Context, bid bid.Bid, client *dynamodb.Client) {
+func (s *MarketplaceService) ModifyAmount(ctx context.Context, bid bid.Bid) {
 
 	var updateExpression *string
 
@@ -110,41 +125,10 @@ func ModifyAmount(ctx context.Context, bid bid.Bid, client *dynamodb.Client) {
 		UpdateExpression: updateExpression,
 	}
 
-	client.UpdateItem(ctx, input)
+	s.databaseService.UpdateItem(ctx, input)
 
 }
 
-func WriteMarketplaceItems(ctx context.Context, items []MarketplaceItem, waitGroup *sync.WaitGroup, client *dynamodb.Client) {
-
-	defer waitGroup.Done()
-
-	requestItems := map[string][]types.WriteRequest{}
-
-	putItems := make([]types.WriteRequest, len(items))
-
-	for i, item := range items {
-		attributeValueMap, _ := attributevalue.MarshalMap(MarketplaceDynamoDbItem{
-			Id:         "MK",
-			SortKey:    BuildMarketplaceDynamoId(item.Kind, item.Date, item.AwayTeam, item.HomeTeam),
-			Spread:     item.Spread,
-			Ttl:        item.Date.AddDate(0, 0, 1).Unix(),
-			HomeAmount: 0,
-			AwayAmount: 0,
-		})
-
-		putItems[i] = types.WriteRequest{PutRequest: &types.PutRequest{
-			Item: attributeValueMap,
-		}}
-	}
-
-	requestItems[os.Getenv("TABLE_NAME")] = putItems
-
-	_, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
-		RequestItems: requestItems,
-	})
-
-	if err != nil {
-		fmt.Println(err.Error())
-	}
-
+func (s *MarketplaceService) Write(ctx context.Context, items []MarketplaceItem) {
+	s.databaseService.Write(ctx, items)
 }

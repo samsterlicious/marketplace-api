@@ -10,17 +10,15 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"sammy.link/bet"
 	"sammy.link/bid"
+	"sammy.link/database"
 	"sammy.link/marketplace"
 	"sammy.link/util"
 )
 
-var dynamoClient *dynamodb.Client
-
-func handler(ctx context.Context, message json.RawMessage) error {
+func handler(ctx context.Context, message json.RawMessage, betService bet.Service, bidService bid.Service) error {
 	input := TargetInput{}
 
 	fmt.Println(message)
@@ -37,11 +35,7 @@ func handler(ctx context.Context, message json.RawMessage) error {
 
 	//loops through events
 
-	config := util.GetAwsConfig(ctx)
-
-	if dynamoClient == nil {
-		dynamoClient = util.GetDynamoClient(config)
-	}
+	config, _ := util.GetAwsConfig(ctx)
 
 	betSliceChannel := make(chan []bet.Bet)
 
@@ -49,7 +43,7 @@ func handler(ctx context.Context, message json.RawMessage) error {
 		waitGroup.Add(1)
 		go func(myEvent marketplace.MarketplaceItem) {
 			defer waitGroup.Done()
-			createBets(ctx, myEvent, dynamoClient, betSliceChannel)
+			createBets(ctx, myEvent, betSliceChannel, betService, bidService)
 		}(event)
 
 	}
@@ -87,12 +81,12 @@ func handler(ctx context.Context, message json.RawMessage) error {
 		betSlice := <-betSliceChannel
 		bigDaddyBetSlice = append(bigDaddyBetSlice, betSlice...)
 	}
-	now := time.Now()
+
 	for i := 0; i < len(bigDaddyBetSlice); i += 25 {
 		waitGroup.Add(1)
 		go func(myBets []bet.Bet) {
 			defer waitGroup.Done()
-			bet.WriteBets(ctx, myBets, dynamoClient, now)
+			betService.Write(ctx, myBets)
 		}(bigDaddyBetSlice[i:min(int64(i+25), int64(len(bigDaddyBetSlice)))])
 	}
 	waitGroup.Wait()
@@ -106,8 +100,8 @@ func min(a, b int64) int64 {
 	return b
 }
 
-func createBets(ctx context.Context, event marketplace.MarketplaceItem, client *dynamodb.Client, betSliceChannel chan []bet.Bet) {
-	dynamoBids := bid.GetBidsByEvent(ctx, fmt.Sprintf("%s|%s|%s|%s", event.Kind, event.Date.Format(time.RFC3339), event.AwayTeam, event.HomeTeam), client)
+func createBets(ctx context.Context, event marketplace.MarketplaceItem, betSliceChannel chan []bet.Bet, betService bet.Service, bidService bid.Service) {
+	bids := bidService.GetBidsByEvent(ctx, fmt.Sprintf("%s|%s|%s|%s", event.Kind, event.Date.Format(time.RFC3339), event.AwayTeam, event.HomeTeam))
 
 	bidMap := make(map[string][]bid.Bid)
 
@@ -116,8 +110,7 @@ func createBets(ctx context.Context, event marketplace.MarketplaceItem, client *
 	var kind string
 	var date time.Time
 
-	for _, dynamoBid := range dynamoBids {
-		bidItem := dynamoBid.GetItem()
+	for _, bidItem := range bids {
 		if k, ok := bidMap[bidItem.ChosenCompetitor]; ok {
 			bidMap[bidItem.ChosenCompetitor] = append(k, bidItem)
 		} else {
@@ -198,7 +191,9 @@ func createBets(ctx context.Context, event marketplace.MarketplaceItem, client *
 }
 
 func main() {
-	lambda.Start(handler)
+	lambda.Start(func(ctx context.Context, message json.RawMessage) error {
+		return handler(ctx, message, bet.NewService(database.GetDatabaseService[bet.BetDynamoItem, bet.Bet](ctx)), bid.NewService(database.GetDatabaseService[bid.DyanmoBidItem, bid.Bid](ctx)))
+	})
 }
 
 type TargetInput struct {

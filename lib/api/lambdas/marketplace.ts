@@ -24,6 +24,11 @@ export function createMarketplaceLambdas(
     },
   })
 
+  const getEspnInfo = new GoFunction(scope, 'getEspnInfo', {
+    entry: 'src/main/marketplace/getEspnInfo',
+    ...config,
+  })
+
   params.table.grantReadWriteData(createEvents)
   params.table.grantReadData(getAvailableEvents)
 
@@ -47,6 +52,7 @@ export function createMarketplaceLambdas(
 
   return {
     create: createEvents,
+    getEspnInfo,
     get: getAvailableEvents,
   }
 }
@@ -54,6 +60,7 @@ export function createMarketplaceLambdas(
 export type MarketplaceLambdas = {
   create: GoFunction
   get: GoFunction
+  getEspnInfo: GoFunction
 }
 
 export type CreateMarketplaceParams = CreateLambdaParams & {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -12,27 +13,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge/types"
+	"sammy.link/database"
 	"sammy.link/espn"
 	"sammy.link/marketplace"
 	"sammy.link/util"
 )
 
 func main() {
-	lambda.Start(handler)
+	lambda.Start(func(ctx context.Context) {
+		handler(ctx, marketplace.NewService(database.GetDatabaseService[marketplace.MarketplaceDynamoDbItem, marketplace.MarketplaceItem](ctx)))
+	})
 }
 
-func handler(ctx context.Context) {
+func handler(ctx context.Context, service marketplace.Service) {
 
-	config := util.GetAwsConfig(ctx)
-	client := util.GetDynamoClient(config)
-	marketplaceDbItems := marketplace.GetMarketplaceItems(ctx, client)
+	marketplaceDbItems := service.GetItems(ctx)
 
 	fmt.Printf("%d is len", len(marketplaceDbItems))
 
 	marketplaceCache := make(map[string]bool)
 
 	for _, item := range marketplaceDbItems {
-		marketplaceCache[item.SortKey] = true
+		marketplaceCache[marketplace.BuildMarketplaceDynamoId(item.Kind, item.Date, item.AwayTeam, item.HomeTeam)] = true
 	}
 
 	espnResponseChannel := make(chan espn.EspnResponse, 4)
@@ -43,9 +45,11 @@ func handler(ctx context.Context) {
 
 	firstDate := time.Now()
 	secondDate := firstDate.AddDate(0, 0, 7)
+	//@TODO use the espn service from the handler parameter
+	espnService := espn.NewService(http.Client{})
 	for sport, leagues := range sportMap {
 		for _, league := range leagues {
-			go espn.GetEspnData(sport, league, espnResponseChannel, firstDate, secondDate)
+			go espnService.GetEspnData(sport, league, espnResponseChannel, firstDate, secondDate)
 		}
 	}
 
@@ -92,10 +96,12 @@ func handler(ctx context.Context) {
 	for i := 0; i < len(events); i += 25 {
 		waitGroup.Add(1)
 		go func(myEvents []marketplace.MarketplaceItem) {
-			marketplace.WriteMarketplaceItems(ctx, myEvents, &waitGroup, client)
+			defer waitGroup.Done()
+			service.Write(ctx, myEvents)
 		}(events[i:util.Min(i+25, len(events))])
 	}
 
+	config, _ := util.GetAwsConfig(ctx)
 	bridge := eventbridge.NewFromConfig(config)
 
 	nowUnix := time.Now().Unix()

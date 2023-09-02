@@ -9,14 +9,27 @@ export function createMarketplaceResource(
   authorizer: HttpJwtAuthorizer,
 ) {
   const getMarketplaceIntegration = new HttpLambdaIntegration(
-    'CreateIntegration',
+    'GetMarketplaceIntegration',
     functions.get,
+  )
+
+  const getEspnInfoIntegration = new HttpLambdaIntegration(
+    'GetEspnInfoIntegration',
+    functions.getEspnInfo,
   )
 
   api.addRoutes({
     path: '/marketplace',
     methods: [HttpMethod.GET],
     integration: getMarketplaceIntegration,
+    authorizer,
+    authorizationScopes: ['openid'],
+  })
+
+  api.addRoutes({
+    path: '/espn-info',
+    methods: [HttpMethod.GET],
+    integration: getEspnInfoIntegration,
     authorizer,
     authorizationScopes: ['openid'],
   })

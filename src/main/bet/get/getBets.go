@@ -6,37 +6,28 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"sammy.link/bet"
+	"sammy.link/database"
 	"sammy.link/util"
 )
 
-var dynamoClient *dynamodb.Client
+func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest, betService bet.Service) (events.APIGatewayV2HTTPResponse, error) {
 
-func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	if dynamoClient == nil {
-		dynamoClient = util.GetDynamoClient(util.GetAwsConfig(ctx))
-	}
-
-	var dynamoBets []bet.BetDynamoItem
+	var bets []bet.Bet
 	if date, ok := request.PathParameters["date"]; ok {
-		dynamoBets = bet.GetBetsByDate(ctx, date, dynamoClient)
+		bets = betService.GetBetsByDate(ctx, date)
 
 	} else {
-		dynamoBets = bet.GetBetsByUser(ctx, request.RequestContext.Authorizer.JWT.Claims["https://sammy.link/email"], dynamoClient)
+		bets = betService.GetBetsByUser(ctx, request.RequestContext.Authorizer.JWT.Claims["https://sammy.link/email"])
 	}
 
-	bids := make([]bet.Bet, 0, len(dynamoBets))
-
-	for _, bet := range dynamoBets {
-		bids = append(bids, bet.GetItem())
-	}
-
-	jsonBids, _ := json.Marshal(bids)
-	return util.ApigatewayResponse(string(jsonBids), 200)
+	jsonBets, _ := json.Marshal(bets)
+	return util.ApigatewayResponse(string(jsonBets), 200)
 }
 
 func main() {
-	lambda.Start(handleGet)
+	lambda.Start(func(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+		return handleGet(ctx, request, bet.NewService(database.GetDatabaseService[bet.BetDynamoItem, bet.Bet](ctx)))
+	})
 }

@@ -18,6 +18,8 @@ import { Lambdas } from '../lambdas'
 import { createBetResource } from './routes/bet'
 import { createBidResource } from './routes/bid'
 import { createMarketplaceResource } from './routes/marketplace'
+import { createOutcomeeResource } from './routes/outcomeRoute'
+import { createUserResource } from './routes/user'
 
 export function createApi(
   scope: Construct,
@@ -75,6 +77,7 @@ export function createApi(
   createBetResource(api, lambdas.bet, authorizer)
   createBidResource(api, lambdas.bid, authorizer)
   createMarketplaceResource(api, lambdas.marketplace, authorizer)
-
+  createOutcomeeResource(api, lambdas.outcome, authorizer)
+  createUserResource(api, lambdas.user, authorizer)
   return api
 }

@@ -9,10 +9,9 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"sammy.link/util"
+	"sammy.link/database"
 )
 
 type Bid struct {
@@ -36,6 +35,22 @@ type DyanmoBidItem struct {
 	Ttl          int64  `dynamodbav:"ttl"`
 }
 
+type Service interface {
+	GetBidsByEvent(ctx context.Context, event string) []Bid
+	GetBidsByUser(ctx context.Context, user string) []Bid
+	WriteBids(ctx context.Context, items []Bid)
+}
+type BidService struct {
+	client          *dynamodb.Client
+	databaseService database.Service[DyanmoBidItem, Bid]
+}
+
+func NewService(databaseService database.Service[DyanmoBidItem, Bid]) Service {
+	return &BidService{
+		databaseService: databaseService,
+	}
+}
+
 func GetBidDynamoId(kind string, date time.Time, awayTeam string, homeTeam string) string {
 	return fmt.Sprintf("BID|%s|%s|%s|%s", kind, date.Format(time.RFC3339), awayTeam, homeTeam)
 }
@@ -44,7 +59,7 @@ func GetBidDynamoSortKey(chosenTeam string, user string, createDate time.Time) s
 	return fmt.Sprintf("%s|%s|%d", chosenTeam, user, createDate.Unix())
 }
 
-func (bid Bid) getDynamoItem() DyanmoBidItem {
+func (bid Bid) GetDynamoItem() database.DynamoItem {
 	return DyanmoBidItem{
 		Id:           GetBidDynamoId(bid.Kind, bid.Date, bid.AwayTeam, bid.HomeTeam),
 		SortKey:      GetBidDynamoSortKey(bid.ChosenCompetitor, bid.User, bid.CreateDate),
@@ -55,7 +70,7 @@ func (bid Bid) getDynamoItem() DyanmoBidItem {
 	}
 }
 
-func (bid DyanmoBidItem) GetItem() Bid {
+func (bid DyanmoBidItem) GetItem() database.Item {
 	idExpression := regexp.MustCompile(`BID\|(?P<Kind>[^|]+)\|(?P<Date>[^|]+)\|(?P<AwayTeam>[^|]+)\|(?P<HomeTeam>[^|]+)`)
 	sortKeyExpression := regexp.MustCompile(`(?P<ChosenCompetitor>[^|]+)\|(?P<User>[^|]+)\|(?P<CreateDate>[^|]+)`)
 
@@ -94,7 +109,7 @@ func (bid DyanmoBidItem) GetItem() Bid {
 	}
 }
 
-func GetBidsByEvent(ctx context.Context, event string, client *dynamodb.Client) []DyanmoBidItem {
+func (s *BidService) GetBidsByEvent(ctx context.Context, event string) []Bid {
 	eventExpression := regexp.MustCompile(`(?P<Kind>[^|]+)\|(?P<Date>[^|]+)\|(?P<AwayTeam>[^|]+)\|(?P<HomeTeam>[^|]+)\|?(?P<ChosenCompetitor>[^|]+)?`)
 
 	eventMatch := eventExpression.FindStringSubmatch(event)
@@ -108,7 +123,7 @@ func GetBidsByEvent(ctx context.Context, event string, client *dynamodb.Client) 
 
 	date, _ := time.Parse(time.RFC3339, paramsMap["Date"])
 
-	return util.Query[DyanmoBidItem](ctx, client, &dynamodb.QueryInput{
+	return s.databaseService.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(os.Getenv("TABLE_NAME")),
 		KeyConditionExpression: aws.String("id = :id"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
@@ -117,8 +132,8 @@ func GetBidsByEvent(ctx context.Context, event string, client *dynamodb.Client) 
 	})
 }
 
-func GetBidsByUser(ctx context.Context, user string, client *dynamodb.Client) []DyanmoBidItem {
-	return util.Query[DyanmoBidItem](ctx, client, &dynamodb.QueryInput{
+func (s *BidService) GetBidsByUser(ctx context.Context, user string) []Bid {
+	return s.databaseService.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(os.Getenv("TABLE_NAME")),
 		IndexName:              aws.String("gsi1"),
 		KeyConditionExpression: aws.String("gsi1_id = :id"),
@@ -128,28 +143,6 @@ func GetBidsByUser(ctx context.Context, user string, client *dynamodb.Client) []
 	})
 }
 
-func WriteBids(ctx context.Context, items []Bid, client *dynamodb.Client) {
-
-	requestItems := map[string][]types.WriteRequest{}
-
-	putItems := make([]types.WriteRequest, len(items))
-
-	for i, item := range items {
-		attributeValueMap, _ := attributevalue.MarshalMap(item.getDynamoItem())
-
-		putItems[i] = types.WriteRequest{PutRequest: &types.PutRequest{
-			Item: attributeValueMap,
-		}}
-	}
-
-	requestItems[os.Getenv("TABLE_NAME")] = putItems
-
-	_, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
-		RequestItems: requestItems,
-	},
-	)
-
-	if err != nil {
-		fmt.Println(err.Error())
-	}
+func (s *BidService) WriteBids(ctx context.Context, items []Bid) {
+	s.databaseService.Write(ctx, items)
 }

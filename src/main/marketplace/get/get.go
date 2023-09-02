@@ -7,7 +7,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"sammy.link/database"
 	"sammy.link/marketplace"
 	"sammy.link/util"
 )
@@ -16,14 +16,9 @@ func isRecent(item marketplace.MarketplaceItem) bool {
 	return item.Date.After(time.Now())
 }
 
-var dynamoClient *dynamodb.Client
+func handleCreate(ctx context.Context, request events.APIGatewayV2HTTPRequest, service marketplace.Service) (events.APIGatewayV2HTTPResponse, error) {
 
-func handleCreate(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	if dynamoClient == nil {
-		dynamoClient = util.GetDynamoClient(util.GetAwsConfig(ctx))
-	}
-
-	marketplaceEvents := marketplace.ConvertMarketplaceItems(marketplace.GetMarketplaceItems(ctx, dynamoClient))
+	marketplaceEvents := service.GetItems(ctx)
 
 	resp, _ := json.Marshal(util.Filter(marketplaceEvents, isRecent))
 
@@ -31,5 +26,7 @@ func handleCreate(ctx context.Context, request events.APIGatewayV2HTTPRequest) (
 }
 
 func main() {
-	lambda.Start(handleCreate)
+	lambda.Start(func(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+		return handleCreate(ctx, request, marketplace.NewService(database.GetDatabaseService[marketplace.MarketplaceDynamoDbItem, marketplace.MarketplaceItem](ctx)))
+	})
 }

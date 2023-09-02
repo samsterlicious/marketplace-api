@@ -8,10 +8,9 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"sammy.link/util"
+	"sammy.link/database"
 )
 
 type BetDynamoItem struct {
@@ -41,29 +40,64 @@ type Bet struct {
 	Date     time.Time `json:"date"`
 }
 
-const format = "20060102"
+type Service interface {
+	GetBetsByEventDate(ctx context.Context, date string) []Bet
+	GetBetsByDate(ctx context.Context, date string) []Bet
+	GetBetsByUser(ctx context.Context, user string) []Bet
+	Write(ctx context.Context, items []Bet)
+}
+
+type BetService struct {
+	databaseService database.Service[BetDynamoItem, Bet]
+}
+
+func NewService(databaseService database.Service[BetDynamoItem, Bet]) Service {
+	return &BetService{
+		databaseService: databaseService,
+	}
+}
 
 func BuildId(bet Bet) string {
 	return fmt.Sprintf("BET|%s", bet.Date.Format(format))
 }
 
+func (item Bet) GetDynamoItem() database.DynamoItem {
+	//@TODO seems hacky
+	return BetDynamoItem{
+		Id:           BuildId(item),
+		SortKey:      BuildSortKey(item),
+		Amount:       item.Amount,
+		Gsi1_id:      fmt.Sprintf("BET|%s", item.AwayUser),
+		Gsi1_sortKey: item.Date.Format(time.RFC3339),
+		Gsi2_id:      fmt.Sprintf("BET|%s", item.HomeUser),
+		Gsi2_sortKey: item.Date.Format(time.RFC3339),
+		Gsi3_id:      "BET",
+		Gsi3_sortKey: item.Date.Format(time.RFC3339),
+		Status:       item.Status,
+		Spread:       item.Spread,
+		Ttl:          item.Date.AddDate(0, 0, 1).Unix(),
+	}
+}
+
+const format = "20060102"
+
 func BuildSortKey(bet Bet) string {
 	return fmt.Sprintf("%s|%s|%s|%s|%s", bet.Kind, bet.AwayTeam, bet.HomeTeam, bet.AwayUser, bet.HomeUser)
 }
 
-func GetBetsByDate(ctx context.Context, date string, client *dynamodb.Client) []BetDynamoItem {
-	return util.Query[BetDynamoItem](ctx, client, &dynamodb.QueryInput{
+func (s *BetService) GetBetsByDate(ctx context.Context, date string) []Bet {
+	return s.databaseService.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(os.Getenv("TABLE_NAME")),
 		KeyConditionExpression: aws.String("gsi3_id = :id"),
 		IndexName:              aws.String("gsi3"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":id": &types.AttributeValueMemberS{Value: fmt.Sprintf("BET|%s", date)},
+			":id": &types.AttributeValueMemberS{Value: "BET"},
 		},
 	})
 }
 
-func GetBetsByEventDate(ctx context.Context, date string, client *dynamodb.Client) []BetDynamoItem {
-	return util.Query[BetDynamoItem](ctx, client, &dynamodb.QueryInput{
+func (s *BetService) GetBetsByEventDate(ctx context.Context, date string) []Bet {
+	return s.databaseService.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(os.Getenv("TABLE_NAME")),
 		KeyConditionExpression: aws.String("id = :id"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
@@ -72,12 +106,12 @@ func GetBetsByEventDate(ctx context.Context, date string, client *dynamodb.Clien
 	})
 }
 
-func GetBetsByUser(ctx context.Context, user string, client *dynamodb.Client) []BetDynamoItem {
-	betChannel := make(chan []BetDynamoItem)
+func (s *BetService) GetBetsByUser(ctx context.Context, user string) []Bet {
+	betChannel := make(chan []Bet)
 
 	for i := 1; i < 3; i++ {
 		go func(num int) {
-			resp := util.Query[BetDynamoItem](ctx, client, &dynamodb.QueryInput{
+			resp := s.databaseService.Query(ctx, &dynamodb.QueryInput{
 				TableName:              aws.String(os.Getenv("TABLE_NAME")),
 				KeyConditionExpression: aws.String(fmt.Sprintf("gsi%d_id = :id", num)),
 				IndexName:              aws.String(fmt.Sprintf("gsi%d", num)),
@@ -88,7 +122,7 @@ func GetBetsByUser(ctx context.Context, user string, client *dynamodb.Client) []
 			betChannel <- resp
 		}(i)
 	}
-	retSlice := make([]BetDynamoItem, 0)
+	retSlice := make([]Bet, 0)
 	for i := 1; i < 3; i++ {
 		respSlice := <-betChannel
 		retSlice = append(retSlice, respSlice...)
@@ -97,7 +131,7 @@ func GetBetsByUser(ctx context.Context, user string, client *dynamodb.Client) []
 	return retSlice
 }
 
-func (bet BetDynamoItem) GetItem() Bet {
+func (bet BetDynamoItem) GetItem() database.Item {
 	idExpression := regexp.MustCompile(`BET\|(?P<Day>[^|]+)`)
 	// return fmt.Sprintf("%s|%s|%s|%s|%s", bet.Kind, bet.AwayTeam, bet.HomeTeam, bet.AwayUser, bet.HomeUser)
 	sortKeyExpression := regexp.MustCompile(`(?P<Kind>[^|]+)\|(?P<AwayTeam>[^|]+)\|(?P<HomeTeam>[^|]+)\|(?P<AwayUser>[^|]+)\|(?P<HomeUser>[^|]+)`)
@@ -133,51 +167,6 @@ func (bet BetDynamoItem) GetItem() Bet {
 	}
 }
 
-func ConvertDyanmoList(dynamoBids []BetDynamoItem) []Bet {
-	bets := make([]Bet, 0, len(dynamoBids))
-
-	for _, dynamoBid := range dynamoBids {
-		bets = append(bets, dynamoBid.GetItem())
-	}
-
-	return bets
-}
-
-func WriteBets(ctx context.Context, items []Bet, client *dynamodb.Client, now time.Time) {
-
-	requestItems := map[string][]types.WriteRequest{}
-
-	putItems := make([]types.WriteRequest, len(items))
-
-	for i, item := range items {
-		attributeValueMap, _ := attributevalue.MarshalMap(BetDynamoItem{
-			Id:           BuildId(item),
-			SortKey:      BuildSortKey(item),
-			Amount:       item.Amount,
-			Gsi1_id:      fmt.Sprintf("BET|%s", item.AwayUser),
-			Gsi1_sortKey: item.Date.Format(time.RFC3339),
-			Gsi2_id:      fmt.Sprintf("BET|%s", item.HomeUser),
-			Gsi2_sortKey: item.Date.Format(time.RFC3339),
-			Gsi3_id:      fmt.Sprintf("BET|%s", now.Format(format)),
-			Gsi3_sortKey: item.Date.Format(time.RFC3339),
-			Status:       item.Status,
-			Spread:       item.Spread,
-			Ttl:          item.Date.AddDate(0, 1, 0).Unix(),
-		})
-
-		putItems[i] = types.WriteRequest{PutRequest: &types.PutRequest{
-			Item: attributeValueMap,
-		}}
-	}
-
-	requestItems[os.Getenv("TABLE_NAME")] = putItems
-
-	_, err := client.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
-		RequestItems: requestItems,
-	})
-
-	if err != nil {
-		fmt.Println(err.Error())
-	}
-
+func (s *BetService) Write(ctx context.Context, items []Bet) {
+	s.databaseService.Write(ctx, items)
 }

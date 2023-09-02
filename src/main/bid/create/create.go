@@ -8,9 +8,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 
 	"sammy.link/bid"
+	"sammy.link/database"
 	"sammy.link/marketplace"
 	"sammy.link/util"
 )
@@ -26,15 +26,8 @@ func min(a, b int) int {
 	return b
 }
 
-var dynamoClient *dynamodb.Client
-
-func handleCreate(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+func handleCreate(ctx context.Context, request events.APIGatewayV2HTTPRequest, bidService bid.Service, marketplaceService marketplace.Service) (events.APIGatewayV2HTTPResponse, error) {
 	resp := Response{}
-
-	config := util.GetAwsConfig(ctx)
-	if dynamoClient == nil {
-		dynamoClient = util.GetDynamoClient(config)
-	}
 
 	var body = []bid.Bid{}
 
@@ -58,7 +51,7 @@ func handleCreate(ctx context.Context, request events.APIGatewayV2HTTPRequest) (
 			waitGroup.Add(1)
 			go func(modifyItem bid.Bid) {
 				defer waitGroup.Done()
-				marketplace.ModifyAmount(ctx, modifyItem, dynamoClient)
+				marketplaceService.ModifyAmount(ctx, modifyItem)
 			}(item)
 			item.CreateDate = time.Now()
 			goodBids = append(goodBids, item)
@@ -69,7 +62,7 @@ func handleCreate(ctx context.Context, request events.APIGatewayV2HTTPRequest) (
 		waitGroup.Add(1)
 		go func(bidSlice []bid.Bid) {
 			defer waitGroup.Done()
-			bid.WriteBids(ctx, bidSlice, dynamoClient)
+			bidService.WriteBids(ctx, bidSlice)
 		}(goodBids[i:min(i+25, len(goodBids))])
 	}
 
@@ -83,5 +76,8 @@ func handleCreate(ctx context.Context, request events.APIGatewayV2HTTPRequest) (
 }
 
 func main() {
-	lambda.Start(handleCreate)
+	lambda.Start(
+		func(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+			return handleCreate(ctx, request, bid.NewService(database.GetDatabaseService[bid.DyanmoBidItem, bid.Bid](ctx)), marketplace.NewService(database.GetDatabaseService[marketplace.MarketplaceDynamoDbItem, marketplace.MarketplaceItem](ctx)))
+		})
 }

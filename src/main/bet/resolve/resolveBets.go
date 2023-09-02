@@ -3,45 +3,52 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/google/uuid"
 	"sammy.link/bet"
+	"sammy.link/database"
 	"sammy.link/espn"
 	"sammy.link/outcome"
+	"sammy.link/user"
 	"sammy.link/util"
 )
 
 func main() {
-	lambda.Start(handler)
+	lambda.Start(
+		func(ctx context.Context) {
+			handler(ctx, outcome.NewService(database.GetDatabaseService[outcome.OutcomeDynamoItem, outcome.OutcomeItem](ctx)),
+				bet.NewService(database.GetDatabaseService[bet.BetDynamoItem, bet.Bet](ctx)), espn.NewService(http.Client{}),
+				user.NewService(database.GetDatabaseService[user.DynamoItem, user.Item](ctx)))
+		})
 }
 
-func handler(ctx context.Context) {
+func handler(ctx context.Context, outcomeService outcome.Service, betService bet.Service, espnServce espn.Service, userService user.Service) {
 	fivehours, _ := time.ParseDuration("-5h")
-	dynamoClient := util.GetDynamoClient(util.GetAwsConfig(ctx))
-
 	yesterday := time.Now().Add(fivehours)
-	dynamoBets := bet.GetBetsByEventDate(ctx, yesterday.Format("20060102"), dynamoClient)
+	bets := betService.GetBetsByEventDate(ctx, yesterday.Format("20060102"))
 
-	if len(dynamoBets) > 0 {
-		bets := bet.ConvertDyanmoList(dynamoBets)
+	if len(bets) > 0 {
 		kinds := getBetKinds(bets)
 		spreads := getSpreads(bets)
 
-		outcomeChan := make(chan []outcome.Outcome, len(kinds))
+		outcomeChan := make(chan []outcome.OutcomeItem, len(kinds))
+		userChannel := make(chan user.Item, 10)
 
 		for _, kind := range kinds {
 
-			go func(myKind string, myBets []bet.Bet, myOutcomeChan chan []outcome.Outcome) {
-				kindResp := espn.ConvertKind(myKind)
-				espnResponseChannel := make(chan espn.EspnResponse)
-				espn.GetEspnData(kindResp.Sport, kindResp.League, espnResponseChannel, yesterday, yesterday)
+			go func(myKind string, myBets []bet.Bet, myOutcomeChan chan []outcome.OutcomeItem) {
+				kindResp := espnServce.ConvertKind(myKind)
+				espnResponseChannel := make(chan espn.EspnResponse, 1)
+				espnServce.GetEspnData(kindResp.Sport, kindResp.League, espnResponseChannel, yesterday, yesterday)
 				espnResp := <-espnResponseChannel
 				winners := getWinners(spreads, espnResp)
-				outcomeSlice := make([]outcome.Outcome, 0, len(myBets))
+				outcomeSlice := make([]outcome.OutcomeItem, 0, len(myBets))
 
 				for _, bet := range bets {
 					if bet.Kind == myKind {
@@ -49,24 +56,31 @@ func handler(ctx context.Context) {
 						gameResult := winners[gameName]
 
 						if gameResult.team == bet.AwayTeam {
-							outcomeSlice = append(outcomeSlice, outcome.Outcome{
+							outcomeSlice = append(outcomeSlice, outcome.OutcomeItem{
 								Winner:  bet.AwayUser,
 								Loser:   bet.HomeUser,
 								EventId: gameResult.eventId,
 								Week:    gameResult.week,
 								Amount:  bet.Amount,
+								Id:      uuid.NewString(),
 							})
+							sendUpdateUserInfo(bet.AwayUser, bet.HomeUser, bet.Amount, userChannel)
 						} else if gameResult.team == bet.HomeTeam {
-							outcomeSlice = append(outcomeSlice, outcome.Outcome{
+							outcomeSlice = append(outcomeSlice, outcome.OutcomeItem{
 								Winner:  bet.HomeUser,
 								Loser:   bet.AwayUser,
 								EventId: gameResult.eventId,
 								Week:    gameResult.week,
 								Amount:  bet.Amount,
+								Id:      uuid.NewString(),
 							})
+							sendUpdateUserInfo(bet.HomeUser, bet.AwayUser, bet.Amount, userChannel)
+						} else {
+							sendUpdateUserInfo("", "", 0, userChannel)
 						}
 
 					}
+
 				}
 				myOutcomeChan <- outcomeSlice
 			}(kind, bets, outcomeChan)
@@ -74,19 +88,64 @@ func handler(ctx context.Context) {
 
 		var waitGroup sync.WaitGroup
 
-		for range kinds {
-			outcomeSlice := <-outcomeChan
-			for i := 0; i < len(outcomeSlice); i += 25 {
-				waitGroup.Add(1)
-				go func(mySlice []outcome.Outcome) {
-					defer waitGroup.Done()
-					outcome.Write(ctx, mySlice, dynamoClient)
-				}(outcomeSlice[i:util.Min(i+25, len(outcomeSlice))])
-			}
-		}
+		writeOutcomes(ctx, kinds, outcomeChan, &waitGroup, outcomeService)
 
+		waitGroup.Add(1)
+		go updateUserTotals(ctx, userService, userChannel, bets, &waitGroup)
 		waitGroup.Wait()
 
+	}
+
+}
+
+func sendUpdateUserInfo(winner string, loser string, amount int64, userChannel chan user.Item) {
+	userChannel <- user.Item{
+		Email: winner,
+		Total: amount,
+	}
+	userChannel <- user.Item{
+		Email: loser,
+		Total: -1 * amount,
+	}
+}
+
+func updateUserTotals(ctx context.Context, userService user.Service, userChannel chan user.Item, bets []bet.Bet, waitGroup *sync.WaitGroup) {
+	defer waitGroup.Done()
+	userMap := make(map[string]int64)
+	for i := 0; i < len(bets)*2; i++ {
+		updateUser := <-userChannel
+		if updateUser.Email == "" {
+			continue
+		}
+		if existingUser, ok := userMap[updateUser.Email]; ok {
+			userMap[updateUser.Email] = existingUser + updateUser.Total
+		} else {
+			userMap[updateUser.Email] = updateUser.Total
+		}
+	}
+
+	for userEmail, total := range userMap {
+		if total != 0 {
+			fmt.Printf("email %s; total %d\n", userEmail, total)
+			waitGroup.Add(1)
+			go func(email string, amount int64) {
+				defer waitGroup.Done()
+				userService.Update(ctx, email, amount)
+			}(userEmail, total)
+		}
+	}
+}
+
+func writeOutcomes(ctx context.Context, kinds []string, outcomeChan chan []outcome.OutcomeItem, waitGroup *sync.WaitGroup, o outcome.Service) {
+	for range kinds {
+		outcomeSlice := <-outcomeChan
+		for i := 0; i < len(outcomeSlice) && len(outcomeSlice) > 0; i += 25 {
+			waitGroup.Add(1)
+			go func(mySlice []outcome.OutcomeItem) {
+				defer waitGroup.Done()
+				o.Write(ctx, mySlice)
+			}(outcomeSlice[i:util.Min(i+25, len(outcomeSlice))])
+		}
 	}
 }
 

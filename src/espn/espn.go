@@ -31,6 +31,7 @@ type EspnEvent struct {
 	Status      string           `json:"status"`
 	Competitors []EspnCompetitor `json:"competitors"`
 	Week        int              `json:"week"`
+	Link        string           `json:"link"`
 }
 
 type EspnCompetitor struct {
@@ -50,7 +51,23 @@ type Kind struct {
 	League string
 }
 
-func ConvertKind(kind string) Kind {
+type Service interface {
+	ConvertKind(kind string) Kind
+	GetEspnData(sport string, league string, channel chan EspnResponse, date time.Time, secondDate time.Time)
+	GetEspnEvent(sport string, league string, eventId string) (EspnResponse, error)
+}
+
+type EspnService struct {
+	client http.Client
+}
+
+func NewService(client http.Client) Service {
+	return &EspnService{
+		client: client,
+	}
+}
+
+func (s *EspnService) ConvertKind(kind string) Kind {
 	if kind == "CFB" {
 		return Kind{
 			Sport:  "football",
@@ -63,15 +80,41 @@ func ConvertKind(kind string) Kind {
 	}
 }
 
-// time.Now().AddDate(0, 0, 7)
-func GetEspnData(sport string, league string, channel chan EspnResponse, date time.Time, secondDate time.Time) {
-	const format = "20060102"
+func (s *EspnService) GetEspnEvent(sport string, league string, eventId string) (EspnResponse, error) {
+	request, _ := http.NewRequest("GET", fmt.Sprintf("https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=%s&league=%s&event=%s",
+		sport, league, eventId), nil)
 
-	resp, err := http.Get(fmt.Sprintf("https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=%s&league=%s&dates=%s-%s",
-		sport, league, date.Format(format), secondDate.Format(format)))
+	resp, err := s.client.Do(request)
+
+	var response EspnResponse
 
 	if err != nil {
-		panic(err)
+		return response, err
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(&response)
+
+	if err != nil {
+		return response, err
+	}
+
+	return response, nil
+}
+
+func (s *EspnService) GetEspnData(sport string, league string, channel chan EspnResponse, date time.Time, secondDate time.Time) {
+	const format = "20060102"
+
+	request, err := http.NewRequest("GET", fmt.Sprintf("https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=%s&league=%s&dates=%s-%s",
+		sport, league, date.Format(format), secondDate.Format(format)), nil)
+
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	resp, err := s.client.Do(request)
+
+	if err != nil {
+		fmt.Println(err.Error())
 	}
 
 	defer resp.Body.Close()
@@ -80,8 +123,7 @@ func GetEspnData(sport string, league string, channel chan EspnResponse, date ti
 	err = json.NewDecoder(resp.Body).Decode(&response)
 
 	if err != nil {
-		panic(err)
+		fmt.Println(err.Error())
 	}
-
 	channel <- response
 }
