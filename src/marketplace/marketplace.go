@@ -16,22 +16,32 @@ import (
 )
 
 type MarketplaceItem struct {
-	AwayTeam   string    `json:"awayTeam"`
-	HomeTeam   string    `json:"homeTeam"`
-	Date       time.Time `json:"date"`
-	Kind       string    `json:"kind"`
-	Spread     string    `json:"spread"`
-	HomeAmount int64     `json:"homeAmount"`
-	AwayAmount int64     `json:"awayAmount"`
+	AwayTeam         string    `json:"awayTeam"`
+	HomeTeam         string    `json:"homeTeam"`
+	AwayAbbreviation string    `json:"awayAbbreviation"`
+	HomeAbbreviation string    `json:"homeAbbreviation"`
+	AwayRecord       string    `json:"awayRecord"`
+	HomeRecord       string    `json:"homeRecord"`
+	Id               string    `json:"id"`
+	Date             time.Time `json:"date"`
+	Kind             string    `json:"kind"`
+	Spread           string    `json:"spread"`
+	HomeAmount       int64     `json:"homeAmount"`
+	AwayAmount       int64     `json:"awayAmount"`
 }
 
 type MarketplaceDynamoDbItem struct {
-	Id         string `dynamodbav:"id"`
-	SortKey    string `dynamodbav:"sortKey"`
-	Spread     string `dynamodbav:"spread"`
-	Ttl        int64  `dynamodbav:"ttl"`
-	HomeAmount int64  `dynamodbav:"homeAmount"`
-	AwayAmount int64  `dynamodbav:"awayAmount"`
+	Id               string `dynamodbav:"id"`
+	SortKey          string `dynamodbav:"sortKey"`
+	Spread           string `dynamodbav:"spread"`
+	Ttl              int64  `dynamodbav:"ttl"`
+	AwayAbbreviation string `dynamodbav:"awayAb"`
+	HomeAbbreviation string `dynamodbav:"homeAb"`
+	AwayRecord       string `dynamodbav:"aR"`
+	HomeRecord       string `dynamodbav:"hR"`
+	EventId          string `dynamodbav:"eId"`
+	HomeAmount       int64  `dynamodbav:"homeAmount"`
+	AwayAmount       int64  `dynamodbav:"awayAmount"`
 }
 
 type Service interface {
@@ -55,12 +65,17 @@ func (item MarketplaceDynamoDbItem) String() string {
 
 func (item MarketplaceItem) GetDynamoItem() database.DynamoItem {
 	return MarketplaceDynamoDbItem{
-		Id:         "MK",
-		SortKey:    BuildMarketplaceDynamoId(item.Kind, item.Date, item.AwayTeam, item.HomeTeam),
-		Spread:     item.Spread,
-		Ttl:        item.Date.AddDate(0, 0, 1).Unix(),
-		HomeAmount: item.HomeAmount,
-		AwayAmount: item.AwayAmount,
+		Id:               "MK",
+		SortKey:          BuildMarketplaceDynamoId(item.Kind, item.Date, item.AwayTeam, item.HomeTeam),
+		Spread:           item.Spread,
+		Ttl:              item.Date.AddDate(0, 0, 1).Unix(),
+		HomeAmount:       item.HomeAmount,
+		AwayAmount:       item.AwayAmount,
+		AwayAbbreviation: item.AwayAbbreviation,
+		HomeAbbreviation: item.HomeAbbreviation,
+		AwayRecord:       item.AwayRecord,
+		HomeRecord:       item.HomeRecord,
+		EventId:          item.Id,
 	}
 }
 
@@ -79,13 +94,18 @@ func (item MarketplaceDynamoDbItem) GetItem() database.Item {
 	date, _ := time.Parse(time.RFC3339, paramsMap["Date"])
 
 	return MarketplaceItem{
-		AwayTeam:   paramsMap["AwayTeam"],
-		HomeTeam:   paramsMap["HomeTeam"],
-		Date:       date,
-		Kind:       paramsMap["Kind"],
-		Spread:     item.Spread,
-		HomeAmount: item.HomeAmount,
-		AwayAmount: item.AwayAmount,
+		AwayTeam:         paramsMap["AwayTeam"],
+		HomeTeam:         paramsMap["HomeTeam"],
+		Date:             date,
+		Kind:             paramsMap["Kind"],
+		Spread:           item.Spread,
+		HomeAmount:       item.HomeAmount,
+		AwayAmount:       item.AwayAmount,
+		AwayAbbreviation: item.AwayAbbreviation,
+		HomeAbbreviation: item.HomeAbbreviation,
+		AwayRecord:       item.AwayRecord,
+		HomeRecord:       item.HomeRecord,
+		Id:               item.EventId,
 	}
 }
 

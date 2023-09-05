@@ -55,8 +55,6 @@ func handler(ctx context.Context, service marketplace.Service) {
 
 	events := make([]marketplace.MarketplaceItem, 0, 25)
 
-	eventBridgeMap := make(map[int64][]marketplace.MarketplaceItem)
-
 	for _, leagues := range sportMap {
 		for range leagues {
 			response := <-espnResponseChannel
@@ -73,14 +71,12 @@ func handler(ctx context.Context, service marketplace.Service) {
 						if !marketplaceCache[marketplace.BuildMarketplaceDynamoId(kind, event.Date, awayTeam.Name, homeTeam.Name)] && event.Date.After(time.Now()) && event.Odds.Details != "" && event.Odds.Details != "OFF" {
 							item := marketplace.MarketplaceItem{AwayTeam: awayTeam.Name,
 								HomeTeam: homeTeam.Name, Date: event.Date, Kind: kind,
-								Spread: event.Odds.Details}
-
-							formattedDate := event.Date.Unix()
-							if val, ok := eventBridgeMap[formattedDate]; ok {
-								eventBridgeMap[formattedDate] = append(val, item)
-							} else {
-								eventBridgeMap[formattedDate] = []marketplace.MarketplaceItem{item}
-							}
+								AwayAbbreviation: awayTeam.Abbreviation,
+								HomeAbbreviation: homeTeam.Abbreviation,
+								AwayRecord:       awayTeam.Record,
+								HomeRecord:       homeTeam.Record,
+								Id:               event.Id,
+								Spread:           event.Odds.Details}
 
 							events = append(events, item)
 						}
@@ -99,23 +95,6 @@ func handler(ctx context.Context, service marketplace.Service) {
 			defer waitGroup.Done()
 			service.Write(ctx, myEvents)
 		}(events[i:util.Min(i+25, len(events))])
-	}
-
-	config, _ := util.GetAwsConfig(ctx)
-	bridge := eventbridge.NewFromConfig(config)
-
-	nowUnix := time.Now().Unix()
-
-	for eventDate, events := range eventBridgeMap {
-
-		waitGroup.Add(1)
-
-		go func(myEventDate int64, myEvents []marketplace.MarketplaceItem, myNowUnix int64) {
-			defer waitGroup.Done()
-			createRuleAndTarget(ctx, bridge, myEventDate, nowUnix, myEvents)
-
-		}(eventDate, events, nowUnix)
-
 	}
 
 	waitGroup.Wait()

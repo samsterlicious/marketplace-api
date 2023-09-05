@@ -40,6 +40,7 @@ type EspnCompetitor struct {
 	Winner       bool   `json:"winner"`
 	Score        string `json:"score"`
 	Abbreviation string `json:"abbreviation"`
+	Record       string `json:"record"`
 }
 
 type EspnOdds struct {
