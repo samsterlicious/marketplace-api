@@ -3,6 +3,7 @@ import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import { Construct } from 'constructs'
 import { BetLambdas, createBetLambdas } from './bet'
 import { BidLambdas, createBidLambdas } from './bid'
+import { LeagueLambdas, createLeagueLambdas } from './league'
 import { MarketplaceLambdas, createMarketplaceLambdas } from './marketplace'
 import { OutcomeLambdas, createOutcomeLambdas } from './outcome'
 import { UserLambdas, createUserLambdas } from './user.'
@@ -20,10 +21,8 @@ export function createLambdas(
   return {
     bet: betLambdas,
     bid: createBidLambdas(scope, lambdaConfig, params),
-    marketplace: createMarketplaceLambdas(scope, lambdaConfig, {
-      ...params,
-      createBetLambdaArn: betLambdas.create.functionArn,
-    }),
+    marketplace: createMarketplaceLambdas(scope, lambdaConfig, params),
+    league: createLeagueLambdas(scope, lambdaConfig, params),
     outcome: createOutcomeLambdas(scope, lambdaConfig, params),
     user: createUserLambdas(scope, lambdaConfig, params),
   }
@@ -33,6 +32,7 @@ export type Lambdas = {
   bet: BetLambdas
   bid: BidLambdas
   marketplace: MarketplaceLambdas
+  league: LeagueLambdas
   outcome: OutcomeLambdas
   user: UserLambdas
 }

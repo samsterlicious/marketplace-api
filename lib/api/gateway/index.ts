@@ -17,6 +17,7 @@ import { Config } from '../../backend-stack'
 import { Lambdas } from '../lambdas'
 import { createBetResource } from './routes/bet'
 import { createBidResource } from './routes/bid'
+import { createLeagueResource } from './routes/leagueRoute'
 import { createMarketplaceResource } from './routes/marketplace'
 import { createOutcomeeResource } from './routes/outcomeRoute'
 import { createUserResource } from './routes/user'
@@ -50,6 +51,7 @@ export function createApi(
         CorsHttpMethod.HEAD,
         CorsHttpMethod.OPTIONS,
         CorsHttpMethod.POST,
+        CorsHttpMethod.PUT,
       ],
       allowHeaders: Cors.DEFAULT_HEADERS,
       maxAge: Duration.days(10),
@@ -77,6 +79,7 @@ export function createApi(
   createBetResource(api, lambdas.bet, authorizer)
   createBidResource(api, lambdas.bid, authorizer)
   createMarketplaceResource(api, lambdas.marketplace, authorizer)
+  createLeagueResource(api, lambdas.league, authorizer)
   createOutcomeeResource(api, lambdas.outcome, authorizer)
   createUserResource(api, lambdas.user, authorizer)
   return api

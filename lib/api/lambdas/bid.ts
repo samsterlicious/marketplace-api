@@ -22,14 +22,21 @@ export function createBidLambdas(
     ...config,
   })
 
+  const update = new GoFunction(scope, 'updateBidLambda', {
+    entry: 'src/main/bid/update',
+    ...config,
+  })
+
   params.table.grantReadWriteData(createBid)
   params.table.grantReadWriteData(getByEvent)
   params.table.grantReadWriteData(getByUser)
+  params.table.grantReadWriteData(update)
 
   return {
     create: createBid,
     getByEvent,
     getByUser,
+    update,
   }
 }
 
@@ -37,4 +44,5 @@ export type BidLambdas = {
   create: GoFunction
   getByEvent: GoFunction
   getByUser: GoFunction
+  update: GoFunction
 }

@@ -6,6 +6,7 @@ use (
 	./src/bet
 	./src/database
 	./src/espn
+	./src/league
 	./src/main
 	./src/outcome
 	./src/user

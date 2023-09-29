@@ -36,7 +36,7 @@ func Filter[T any](slice []T, test func(T) bool) []T {
 	return ret
 }
 
-func Min(a, b int) int {
+func Min[T int64 | int](a, b T) T {
 	if a < b {
 		return a
 	}

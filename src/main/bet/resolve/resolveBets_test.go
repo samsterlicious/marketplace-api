@@ -8,8 +8,8 @@ import (
 	"sammy.link/bet"
 	"sammy.link/database"
 	"sammy.link/espn"
+	"sammy.link/league"
 	"sammy.link/outcome"
-	"sammy.link/user"
 )
 
 func TestGetBetKinds(t *testing.T) {
@@ -70,5 +70,6 @@ func TestHandler(t *testing.T) {
 	ctx := context.TODO()
 	handler(ctx, outcome.NewService(database.GetDatabaseService[outcome.OutcomeDynamoItem, outcome.OutcomeItem](ctx)),
 		bet.NewService(database.GetDatabaseService[bet.BetDynamoItem, bet.Bet](ctx)), espn.NewService(http.Client{}),
-		user.NewService(database.GetDatabaseService[user.DynamoItem, user.Item](ctx)))
+		league.NewService(database.GetDatabaseService[league.LeagueDynamoItem, league.LeagueItem](ctx),
+			database.GetDatabaseService[league.UserInLeagueDynamoItem, league.UserInLeagueItem](ctx)))
 }

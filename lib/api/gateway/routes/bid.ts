@@ -23,6 +23,11 @@ export function createBidResource(
     functions.getByUser,
   )
 
+  const updateBidIntegration = new HttpLambdaIntegration(
+    'UpdateBidIntegration',
+    functions.update,
+  )
+
   api.addRoutes({
     path: '/bid',
     methods: [HttpMethod.POST],
@@ -43,6 +48,14 @@ export function createBidResource(
     path: '/bid',
     methods: [HttpMethod.GET],
     integration: getByUserIntegration,
+    authorizer,
+    authorizationScopes: ['openid'],
+  })
+
+  api.addRoutes({
+    path: '/bid',
+    methods: [HttpMethod.PUT],
+    integration: updateBidIntegration,
     authorizer,
     authorizationScopes: ['openid'],
   })

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -20,10 +22,14 @@ type DynamoItem interface {
 }
 
 type Service[D DynamoItem, I Item] interface {
+	BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput)
 	Get(ctx context.Context, params *dynamodb.GetItemInput) (I, error)
 	Write(ctx context.Context, items []I)
 	Query(ctx context.Context, params *dynamodb.QueryInput) []I
 	UpdateItem(ctx context.Context, params *dynamodb.UpdateItemInput)
+	Lock(ctx context.Context, key string)
+	ReleaseLock(ctx context.Context, key string)
+	Delete(ctx context.Context, input *dynamodb.DeleteItemInput)
 }
 
 type DynamoDbService[D DynamoItem, I Item] struct {
@@ -65,6 +71,14 @@ func (s *DynamoDbService[D, I]) Get(ctx context.Context, params *dynamodb.GetIte
 	}
 
 	return getItem, nil
+}
+
+func (s *DynamoDbService[D, I]) Delete(ctx context.Context, input *dynamodb.DeleteItemInput) {
+	s.client.DeleteItem(ctx, input)
+}
+
+func (s *DynamoDbService[D, I]) BatchWriteItem(ctx context.Context, input *dynamodb.BatchWriteItemInput) {
+	s.client.BatchWriteItem(ctx, input)
 }
 
 func (s *DynamoDbService[D, I]) Write(ctx context.Context, items []I) {
@@ -111,6 +125,54 @@ func (s *DynamoDbService[D, I]) UpdateItem(ctx context.Context, params *dynamodb
 	if err != nil {
 		fmt.Println(err.Error())
 	}
+}
+
+type LockItem struct {
+	Id      string `dynamodbav:"id"`
+	SortKey string `dynamodbav:"sortKey"`
+	Ttl     int64  `dynamodbav:"ttl"`
+}
+
+func GetLock(ctx context.Context, key string, client *dynamodb.Client) error {
+	av, _ := attributevalue.MarshalMap(LockItem{
+		Id:      "LOCK",
+		SortKey: key,
+		Ttl:     time.Now().Add(time.Duration(6e+10)).Unix(),
+	})
+
+	input := &dynamodb.PutItemInput{
+		Item:                av,
+		TableName:           aws.String(os.Getenv("TABLE_NAME")),
+		ConditionExpression: aws.String("attribute_not_exists(sortKey)"),
+	}
+
+	_, err := client.PutItem(ctx, input)
+
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *DynamoDbService[D, I]) Lock(ctx context.Context, key string) {
+	for {
+		err := GetLock(ctx, key, s.client)
+		if err != nil {
+			time.Sleep(2 * time.Second)
+		} else {
+			break
+		}
+	}
+}
+
+func (s *DynamoDbService[D, I]) ReleaseLock(ctx context.Context, key string) {
+	s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		Key: map[string]types.AttributeValue{
+			"id":      &types.AttributeValueMemberS{Value: "LOCK"},
+			"sortKey": &types.AttributeValueMemberS{Value: key},
+		},
+		TableName: aws.String(os.Getenv("TABLE_NAME")),
+	})
 }
 
 func Query[D DynamoItem](ctx context.Context, client *dynamodb.Client, input *dynamodb.QueryInput) []D {

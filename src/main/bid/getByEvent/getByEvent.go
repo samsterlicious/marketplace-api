@@ -14,7 +14,7 @@ import (
 
 func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest, bidService bid.Service) (events.APIGatewayV2HTTPResponse, error) {
 
-	bids := bidService.GetBidsByEvent(ctx, request.PathParameters["event"])
+	bids := bidService.GetBidsByEvent(ctx, request.PathParameters["event"], request.QueryStringParameters["div"])
 
 	jsonBids, _ := json.Marshal(bids)
 

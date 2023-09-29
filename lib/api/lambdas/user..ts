@@ -12,13 +12,21 @@ export function createUserLambdas(
     ...config,
   })
 
+  const updateName = new GoFunction(scope, 'updateNameLambda', {
+    entry: 'src/main/user/updateUsername',
+    ...config,
+  })
+
   params.table.grantReadWriteData(get)
+  params.table.grantReadWriteData(updateName)
 
   return {
     get,
+    updateName,
   }
 }
 
 export type UserLambdas = {
   get: GoFunction
+  updateName: GoFunction
 }

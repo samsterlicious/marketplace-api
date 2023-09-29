@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -14,19 +15,20 @@ import (
 type DynamoItem struct {
 	Id      string `dynamodbav:"id"`
 	SortKey string `dynamodbav:"sortKey"`
-	Total   int64  `dynamodbav:"amount"`
+	Name    string `dynamodbav:"na"`
 }
 
 type Item struct {
-	Email string `json:"email"`
-	Total int64  `json:"total"`
+	Email  string `json:"email"`
+	Name   string `json:"name"`
+	League string `json:"league"`
 }
 
 type Service interface {
-	GetUser(ctx context.Context, user string) (Item, error)
-	GetUsers(ctx context.Context) []Item
+	GetUser(ctx context.Context, user string) []Item
 	Create(ctx context.Context, item Item)
 	Update(ctx context.Context, user string, amount int64)
+	UpdateName(ctx context.Context, item Item)
 }
 
 type UserService struct {
@@ -41,35 +43,45 @@ func NewService(databaseService database.Service[DynamoItem, Item]) Service {
 
 func (dynamoItem DynamoItem) GetItem() database.Item {
 	return Item{
-		Email: dynamoItem.SortKey,
-		Total: dynamoItem.Total,
+		Email:  strings.Split(dynamoItem.Id, "|")[1],
+		Name:   dynamoItem.Name,
+		League: dynamoItem.SortKey,
 	}
 }
 
 func (item Item) GetDynamoItem() database.DynamoItem {
 	return DynamoItem{
-		Id:      "USER",
-		SortKey: item.Email,
-		Total:   item.Total,
+		Id:      getId(item.Email),
+		SortKey: item.League,
+		Name:    item.Name,
 	}
 }
 
-func (s *UserService) GetUser(ctx context.Context, user string) (Item, error) {
-	return s.databaseService.Get(ctx, &dynamodb.GetItemInput{
+func getId(email string) string {
+	return fmt.Sprintf("U|%s", email)
+}
+
+func (s *UserService) UpdateName(ctx context.Context, item Item) {
+	fmt.Printf("item = %+v", item)
+	s.databaseService.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		Key: map[string]types.AttributeValue{
-			"id":      &types.AttributeValueMemberS{Value: "USER"},
-			"sortKey": &types.AttributeValueMemberS{Value: user},
+			"id":      &types.AttributeValueMemberS{Value: getId(item.Email)},
+			"sortKey": &types.AttributeValueMemberS{Value: item.League},
 		},
-		TableName: aws.String(os.Getenv("TABLE_NAME")),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":name": &types.AttributeValueMemberS{Value: item.Name},
+		},
+		TableName:        aws.String(os.Getenv("TABLE_NAME")),
+		UpdateExpression: aws.String("SET na = :name"),
 	})
 }
 
-func (s *UserService) GetUsers(ctx context.Context) []Item {
+func (s *UserService) GetUser(ctx context.Context, email string) []Item {
 	return s.databaseService.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(os.Getenv("TABLE_NAME")),
 		KeyConditionExpression: aws.String("id = :id"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":id": &types.AttributeValueMemberS{Value: "USER"},
+			":id": &types.AttributeValueMemberS{Value: fmt.Sprintf("U|%s", email)},
 		},
 	})
 }

@@ -13,19 +13,6 @@ export function createOutcomeeResource(
     functions.getByUser,
   )
 
-  const getOutcomesRankingsIntegration = new HttpLambdaIntegration(
-    'OutcomesRankingsIntegration',
-    functions.getRankings,
-  )
-
-  api.addRoutes({
-    path: '/leaderboard',
-    methods: [HttpMethod.GET],
-    integration: getOutcomesRankingsIntegration,
-    authorizer,
-    authorizationScopes: ['openid'],
-  })
-
   api.addRoutes({
     path: '/my-outcomes',
     methods: [HttpMethod.GET],

@@ -28,6 +28,7 @@ type MarketplaceItem struct {
 	Spread           string    `json:"spread"`
 	HomeAmount       int64     `json:"homeAmount"`
 	AwayAmount       int64     `json:"awayAmount"`
+	Week             int       `json:"week"`
 }
 
 type MarketplaceDynamoDbItem struct {
@@ -42,6 +43,7 @@ type MarketplaceDynamoDbItem struct {
 	EventId          string `dynamodbav:"eId"`
 	HomeAmount       int64  `dynamodbav:"homeAmount"`
 	AwayAmount       int64  `dynamodbav:"awayAmount"`
+	Week             int    `dynamodbav:"week"`
 }
 
 type Service interface {
@@ -70,6 +72,7 @@ func (item MarketplaceItem) GetDynamoItem() database.DynamoItem {
 		Spread:           item.Spread,
 		Ttl:              item.Date.AddDate(0, 0, 1).Unix(),
 		HomeAmount:       item.HomeAmount,
+		Week:             item.Week,
 		AwayAmount:       item.AwayAmount,
 		AwayAbbreviation: item.AwayAbbreviation,
 		HomeAbbreviation: item.HomeAbbreviation,
@@ -106,6 +109,7 @@ func (item MarketplaceDynamoDbItem) GetItem() database.Item {
 		AwayRecord:       item.AwayRecord,
 		HomeRecord:       item.HomeRecord,
 		Id:               item.EventId,
+		Week:             item.Week,
 	}
 }
 

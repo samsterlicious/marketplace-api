@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,8 +15,8 @@ import (
 	"sammy.link/bet"
 	"sammy.link/database"
 	"sammy.link/espn"
+	"sammy.link/league"
 	"sammy.link/outcome"
-	"sammy.link/user"
 	"sammy.link/util"
 )
 
@@ -24,21 +25,23 @@ func main() {
 		func(ctx context.Context) {
 			handler(ctx, outcome.NewService(database.GetDatabaseService[outcome.OutcomeDynamoItem, outcome.OutcomeItem](ctx)),
 				bet.NewService(database.GetDatabaseService[bet.BetDynamoItem, bet.Bet](ctx)), espn.NewService(http.Client{}),
-				user.NewService(database.GetDatabaseService[user.DynamoItem, user.Item](ctx)))
+				league.NewService(database.GetDatabaseService[league.LeagueDynamoItem, league.LeagueItem](ctx),
+					database.GetDatabaseService[league.UserInLeagueDynamoItem, league.UserInLeagueItem](ctx)))
 		})
 }
 
-func handler(ctx context.Context, outcomeService outcome.Service, betService bet.Service, espnServce espn.Service, userService user.Service) {
+func handler(ctx context.Context, outcomeService outcome.Service, betService bet.Service, espnServce espn.Service, leagueService league.Service) {
 	fivehours, _ := time.ParseDuration("-5h")
 	yesterday := time.Now().Add(fivehours)
 	bets := betService.GetBetsByEventDate(ctx, yesterday.Format("20060102"))
-
+	twentyFourHours, _ := time.ParseDuration("-24h")
+	yesterday = time.Now().Add(twentyFourHours)
 	if len(bets) > 0 {
 		kinds := getBetKinds(bets)
 		spreads := getSpreads(bets)
 
 		outcomeChan := make(chan []outcome.OutcomeItem, len(kinds))
-		userChannel := make(chan user.Item, 10)
+		userLeagueChannel := make(chan league.UserInLeagueItem, 10)
 
 		for _, kind := range kinds {
 
@@ -54,29 +57,31 @@ func handler(ctx context.Context, outcomeService outcome.Service, betService bet
 					if bet.Kind == myKind {
 						gameName := fmt.Sprintf("%s|%s", bet.AwayTeam, bet.HomeTeam)
 						gameResult := winners[gameName]
-
+						week, _ := strconv.Atoi(gameResult.week)
 						if gameResult.team == bet.AwayTeam {
 							outcomeSlice = append(outcomeSlice, outcome.OutcomeItem{
 								Winner:  bet.AwayUser,
 								Loser:   bet.HomeUser,
 								EventId: gameResult.eventId,
-								Week:    gameResult.week,
+								Week:    week,
 								Amount:  bet.Amount,
 								Id:      uuid.NewString(),
+								Div:     bet.Div,
 							})
-							sendUpdateUserInfo(bet.AwayUser, bet.HomeUser, bet.Amount, userChannel)
+							sendUpdateUserInfo(bet.AwayUser, bet.HomeUser, bet.Amount, bet.Div, userLeagueChannel)
 						} else if gameResult.team == bet.HomeTeam {
 							outcomeSlice = append(outcomeSlice, outcome.OutcomeItem{
 								Winner:  bet.HomeUser,
 								Loser:   bet.AwayUser,
 								EventId: gameResult.eventId,
-								Week:    gameResult.week,
+								Week:    week,
 								Amount:  bet.Amount,
 								Id:      uuid.NewString(),
+								Div:     bet.Div,
 							})
-							sendUpdateUserInfo(bet.HomeUser, bet.AwayUser, bet.Amount, userChannel)
+							sendUpdateUserInfo(bet.HomeUser, bet.AwayUser, bet.Amount, bet.Div, userLeagueChannel)
 						} else {
-							sendUpdateUserInfo("", "", 0, userChannel)
+							sendUpdateUserInfo("", "", 0, bet.Div, userLeagueChannel)
 						}
 
 					}
@@ -91,47 +96,50 @@ func handler(ctx context.Context, outcomeService outcome.Service, betService bet
 		writeOutcomes(ctx, kinds, outcomeChan, &waitGroup, outcomeService)
 
 		waitGroup.Add(1)
-		go updateUserTotals(ctx, userService, userChannel, bets, &waitGroup)
+		go updateUserTotals(ctx, leagueService, userLeagueChannel, bets, &waitGroup)
 		waitGroup.Wait()
 
 	}
 
 }
 
-func sendUpdateUserInfo(winner string, loser string, amount int64, userChannel chan user.Item) {
-	userChannel <- user.Item{
-		Email: winner,
-		Total: amount,
+func sendUpdateUserInfo(winner string, loser string, amount int64, div string, userLeagueChannel chan league.UserInLeagueItem) {
+	userLeagueChannel <- league.UserInLeagueItem{
+		Email:  winner,
+		Total:  amount,
+		League: div,
 	}
-	userChannel <- user.Item{
-		Email: loser,
-		Total: -1 * amount,
+	userLeagueChannel <- league.UserInLeagueItem{
+		Email:  loser,
+		Total:  -1 * amount,
+		League: div,
 	}
 }
 
-func updateUserTotals(ctx context.Context, userService user.Service, userChannel chan user.Item, bets []bet.Bet, waitGroup *sync.WaitGroup) {
+func updateUserTotals(ctx context.Context, leagueService league.Service, userLeagueChannel chan league.UserInLeagueItem, bets []bet.Bet, waitGroup *sync.WaitGroup) {
 	defer waitGroup.Done()
 	userMap := make(map[string]int64)
 	for i := 0; i < len(bets)*2; i++ {
-		updateUser := <-userChannel
+		updateUser := <-userLeagueChannel
 		if updateUser.Email == "" {
 			continue
 		}
-		if existingUser, ok := userMap[updateUser.Email]; ok {
-			userMap[updateUser.Email] = existingUser + updateUser.Total
+		key := fmt.Sprintf("%s|%s", updateUser.League, updateUser.Email)
+		if existingUser, ok := userMap[key]; ok {
+			userMap[key] = existingUser + updateUser.Total
 		} else {
-			userMap[updateUser.Email] = updateUser.Total
+			userMap[key] = updateUser.Total
 		}
 	}
 
-	for userEmail, total := range userMap {
+	for userLeagueAndEmail, total := range userMap {
 		if total != 0 {
-			fmt.Printf("email %s; total %d\n", userEmail, total)
 			waitGroup.Add(1)
-			go func(email string, amount int64) {
+			splits := strings.Split(userLeagueAndEmail, "|")
+			go func(league string, email string, amount int64) {
 				defer waitGroup.Done()
-				userService.Update(ctx, email, amount)
-			}(userEmail, total)
+				leagueService.UpdateUserAmount(ctx, league, email, amount)
+			}(splits[0], splits[1], total)
 		}
 	}
 }

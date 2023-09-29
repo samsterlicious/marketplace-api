@@ -8,7 +8,7 @@ import { CreateLambdaParams, LambdaConfig } from '.'
 export function createMarketplaceLambdas(
   scope: Construct,
   config: LambdaConfig,
-  params: CreateMarketplaceParams,
+  params: CreateLambdaParams,
 ): MarketplaceLambdas {
   const getAvailableEvents = new GoFunction(scope, 'getAvailableEventsLambda', {
     entry: 'src/main/marketplace/get',
@@ -20,7 +20,6 @@ export function createMarketplaceLambdas(
     ...config,
     environment: {
       ...config.environment,
-      CREATE_LAMBDA_ARN: params.createBetLambdaArn,
     },
   })
 
@@ -46,7 +45,7 @@ export function createMarketplaceLambdas(
   // const eventBus = EventBus.fromEventBusName(scope, 'DefaultBus', 'default')
 
   new Rule(scope, 'MarketplacePopulatorRule', {
-    schedule: Schedule.cron({ minute: '0', hour: '4' }),
+    schedule: Schedule.cron({ minute: '0', hour: '4', weekDay: '3' }),
     targets: [new LambdaFunction(createEvents)],
   })
 
@@ -61,8 +60,4 @@ export type MarketplaceLambdas = {
   create: GoFunction
   get: GoFunction
   getEspnInfo: GoFunction
-}
-
-export type CreateMarketplaceParams = CreateLambdaParams & {
-  createBetLambdaArn: string
 }

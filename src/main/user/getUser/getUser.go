@@ -8,23 +8,31 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 
 	"sammy.link/database"
+	"sammy.link/league"
 	"sammy.link/user"
 	"sammy.link/util"
 )
 
-func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest, userService user.Service) (events.APIGatewayV2HTTPResponse, error) {
+func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest, userService user.Service, leagueService league.Service) (events.APIGatewayV2HTTPResponse, error) {
 
 	email := request.RequestContext.Authorizer.JWT.Claims["https://sammy.link/email"]
-	resp, err := userService.GetUser(ctx, email)
+	resp := userService.GetUser(ctx, email)
 
-	if err != nil {
+	if len(resp) < 1 {
 		newUser := user.Item{
-			Email: email,
-			Total: 0,
+			Email:  email,
+			League: "default",
+			Name:   "",
 		}
 		userService.Create(ctx, newUser)
-
-		resp = newUser
+		leagueService.AddUser(ctx, league.UserInLeagueItem{
+			Email:  email,
+			Name:   "",
+			League: "default",
+			Total:  0,
+		},
+		)
+		resp = []user.Item{newUser}
 	}
 
 	jsonUser, _ := json.Marshal(resp)
@@ -35,6 +43,8 @@ func handleGet(ctx context.Context, request events.APIGatewayV2HTTPRequest, user
 func main() {
 	lambda.Start(
 		func(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-			return handleGet(ctx, request, user.NewService(database.GetDatabaseService[user.DynamoItem, user.Item](ctx)))
+			return handleGet(ctx, request, user.NewService(database.GetDatabaseService[user.DynamoItem, user.Item](ctx)),
+				league.NewService(database.GetDatabaseService[league.LeagueDynamoItem, league.LeagueItem](ctx),
+					database.GetDatabaseService[league.UserInLeagueDynamoItem, league.UserInLeagueItem](ctx)))
 		})
 }

@@ -26,9 +26,10 @@ type OutcomeItem struct {
 	Winner  string `json:"winner"`
 	Loser   string `json:"loser"`
 	EventId string `json:"eventId"`
-	Week    string `json:"week"`
+	Week    int    `json:"week"`
 	Amount  int64  `json:"amount"`
 	Id      string `json:"id"`
+	Div     string `json:"div"`
 }
 
 type Service interface {
@@ -46,17 +47,19 @@ func NewService(databaseService database.Service[OutcomeDynamoItem, OutcomeItem]
 }
 
 func (item OutcomeItem) getDynamoId() string {
-	return fmt.Sprintf("OUT|%s", item.Week)
+	return fmt.Sprintf("O|%s|%d", item.Div, item.Week)
 }
 
 func (dynamoItem OutcomeDynamoItem) GetItem() database.Item {
 	amount, _ := strconv.ParseInt(dynamoItem.Gsi1_sortKey, 10, 64)
+	week, _ := strconv.Atoi(strings.Split(dynamoItem.Id, "|")[2])
 	return OutcomeItem{
 		Winner:  dynamoItem.Gsi1_id,
 		Loser:   dynamoItem.Gsi2_id,
 		EventId: dynamoItem.Gsi2_sortKey,
-		Week:    strings.Split(dynamoItem.Id, "|")[1],
+		Week:    week,
 		Amount:  amount,
+		Div:     strings.Split(dynamoItem.Id, "|")[1],
 	}
 }
 

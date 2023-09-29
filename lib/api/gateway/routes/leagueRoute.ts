@@ -1,35 +1,21 @@
 import { HttpApi, HttpMethod } from '@aws-cdk/aws-apigatewayv2-alpha'
 import { HttpJwtAuthorizer } from '@aws-cdk/aws-apigatewayv2-authorizers-alpha'
 import { HttpLambdaIntegration } from '@aws-cdk/aws-apigatewayv2-integrations-alpha'
-import { UserLambdas } from '../../lambdas/user.'
+import { LeagueLambdas } from '../../lambdas/league'
 
-export function createUserResource(
+export function createLeagueResource(
   api: HttpApi,
-  functions: UserLambdas,
+  functions: LeagueLambdas,
   authorizer: HttpJwtAuthorizer,
 ) {
   const getUserInfoIntegration = new HttpLambdaIntegration(
     'GetUserInfoIntegration',
-    functions.get,
+    functions.getUsers,
   )
-
-  const updateUsernameIntegration = new HttpLambdaIntegration(
-    'UpdateUsernameIntegration',
-    functions.updateName,
-  )
-
   api.addRoutes({
-    path: '/user',
+    path: '/league/users/{league}',
     methods: [HttpMethod.GET],
     integration: getUserInfoIntegration,
-    authorizer,
-    authorizationScopes: ['openid'],
-  })
-
-  api.addRoutes({
-    path: '/user',
-    methods: [HttpMethod.PUT],
-    integration: updateUsernameIntegration,
     authorizer,
     authorizationScopes: ['openid'],
   })

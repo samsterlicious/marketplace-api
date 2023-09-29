@@ -67,8 +67,15 @@ func handler(ctx context.Context, service marketplace.Service) {
 						homeTeam := event.Competitors[1]
 
 						kind := getKind(league.Name)
-
+						fmt.Printf("week is %d", event.Week)
 						if !marketplaceCache[marketplace.BuildMarketplaceDynamoId(kind, event.Date, awayTeam.Name, homeTeam.Name)] && event.Date.After(time.Now()) && event.Odds.Details != "" && event.Odds.Details != "OFF" {
+
+							spread := event.Odds.Details
+
+							if spread == "EVEN" {
+								spread = fmt.Sprintf("%s %d", awayTeam.Abbreviation, 0)
+							}
+
 							item := marketplace.MarketplaceItem{AwayTeam: awayTeam.Name,
 								HomeTeam: homeTeam.Name, Date: event.Date, Kind: kind,
 								AwayAbbreviation: awayTeam.Abbreviation,
@@ -76,7 +83,8 @@ func handler(ctx context.Context, service marketplace.Service) {
 								AwayRecord:       awayTeam.Record,
 								HomeRecord:       homeTeam.Record,
 								Id:               event.Id,
-								Spread:           event.Odds.Details}
+								Week:             event.Week,
+								Spread:           spread}
 
 							events = append(events, item)
 						}
